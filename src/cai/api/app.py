@@ -354,6 +354,7 @@ def create_cai_api_app(
             agents.append(
                 {
                     "name": getattr(agent, "name", name),
+                    "key": name,
                     "description": getattr(agent, "description", None),
                     "type": a_type,
                     "pattern_type": str(pattern_type) if pattern_type else None,

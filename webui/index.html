@@ -506,7 +506,7 @@ async function loadAgents() {
     while (sel.options.length > 1) sel.remove(1); // giữ "(mặc định)", tránh trùng khi gọi lại
     (data.agents || []).forEach((a) => {
       const o = document.createElement("option");
-      o.value = a.name; o.textContent = a.name + (a.type === "pattern" ? " (pattern)" : "");
+      o.value = a.key || a.name; o.textContent = a.name + (a.type === "pattern" ? " (pattern)" : "");
       sel.appendChild(o);
     });
     if (state.savedAgent) sel.value = state.savedAgent; // QW4: khôi phục agent đã lưu

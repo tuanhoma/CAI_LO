@@ -280,10 +280,53 @@ def get_agent_by_name(
         "continuous ops": "continuous_ops_agent",
     }
 
-    # Normalize agent name - try display name mapping first
-    agent_name_normalized = agent_name.lower().strip()
+    available_agents = get_available_agents()
+
+    # 1. Hỗ trợ số thứ tự agent (ví dụ "20" khi gõ /agent 20 trong terminal)
+    raw_str = str(agent_name).strip()
+    if raw_str.isdigit():
+        idx = int(raw_str)
+        regular_agents = []
+        parallel_patterns = []
+        for key, agent_obj in available_agents.items():
+            if hasattr(agent_obj, "_pattern"):
+                pattern = agent_obj._pattern
+                ptype = getattr(pattern, "type", None)
+                ptype_val = getattr(ptype, "value", str(ptype)) if ptype else ""
+                if ptype_val == "parallel":
+                    parallel_patterns.append(key)
+                else:
+                    regular_agents.append(key)
+            else:
+                regular_agents.append(key)
+        if 1 <= idx <= len(regular_agents):
+            agent_name = regular_agents[idx - 1]
+        elif len(regular_agents) < idx <= len(regular_agents) + len(parallel_patterns):
+            agent_name = parallel_patterns[idx - len(regular_agents) - 1]
+
+    # 2. Chuẩn hóa tên agent và tìm kiếm theo tên hiển thị (display name)
+    agent_name_normalized = str(agent_name).lower().strip()
     if agent_name_normalized in display_name_to_type:
         agent_name = display_name_to_type[agent_name_normalized]
+    elif agent_name_normalized not in available_agents:
+        # Tìm kiếm theo thuộc tính .name của các agent đã đăng ký (VD: 'Web App Pentester')
+        matched_key = None
+        for k, a in available_agents.items():
+            disp_name = getattr(a, "name", "").lower().strip()
+            if disp_name and disp_name == agent_name_normalized:
+                matched_key = k
+                break
+        if matched_key:
+            agent_name = matched_key
+        else:
+            # Fuzzy match: thay khoảng trắng bằng gạch dưới, hoặc thêm/bớt _agent
+            clean_name = agent_name_normalized.replace(" ", "_").replace("-", "_")
+            if clean_name in available_agents:
+                agent_name = clean_name
+            elif f"{clean_name}_agent" in available_agents:
+                agent_name = f"{clean_name}_agent"
+            elif clean_name.endswith("_agent") and clean_name[:-6] in available_agents:
+                agent_name = clean_name[:-6]
 
     # Import the generic factory system
     from cai.agents.factory import get_agent_factory
@@ -299,7 +342,6 @@ def get_agent_by_name(
         pass
 
     # Legacy fallback: get existing singleton instances
-    available_agents = get_available_agents()
     agent_name_lower = agent_name.lower()
 
     # Check if the agent exists in available_agents

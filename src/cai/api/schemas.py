@@ -103,6 +103,7 @@ class AgentToolModel(BaseModel):
 
 class AgentMetadataModel(BaseModel):
     name: str
+    key: str | None = None
     description: str | None = None
     type: str = "agent"  # agent | pattern
     pattern_type: str | None = None
