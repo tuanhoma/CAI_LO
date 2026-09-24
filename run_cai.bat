@@ -8,7 +8,28 @@ echo.
 
 cd /d "%~dp0"
 
-:: 1. Check Python
+:: Set base preferences
+set PROMPT_TOOLKIT_NO_CPR=1
+set CAI_STREAM=false
+
+:: 1. Auto-discover Pentest & Helper Tools on Windows
+if exist "%USERPROFILE%\ReconTools\nmap" set "PATH=%USERPROFILE%\ReconTools\nmap;!PATH!"
+if exist "%USERPROFILE%\go\bin" set "PATH=%USERPROFILE%\go\bin;!PATH!"
+if exist "%LOCALAPPDATA%\Programs\Ollama" set "PATH=%LOCALAPPDATA%\Programs\Ollama;!PATH!"
+if exist "C:\Program Files\Git\usr\bin" set "PATH=C:\Program Files\Git\usr\bin;C:\Program Files\Git\bin;!PATH!"
+if exist "%LOCALAPPDATA%\Python\pythoncore-3.14-64\Scripts" set "PATH=%LOCALAPPDATA%\Python\pythoncore-3.14-64\Scripts;!PATH!"
+
+:: 2. Check and start Ollama in background if not already running
+curl.exe -s http://localhost:11434 >nul 2>&1
+if %errorlevel% neq 0 (
+    if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" (
+        echo [*] Dang khoi dong Ollama chay ngam...
+        start /min "" "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" serve
+        timeout /t 2 /nobreak >nul 2>&1
+    )
+)
+
+:: 3. Check Python
 where python >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Python not found in PATH! Please install Python 3.10, 3.11, or 3.12.
@@ -16,7 +37,7 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: 2. Check Virtual Environment
+:: 4. Check Virtual Environment
 if exist "cai_env\Scripts\activate.bat" (
     set "VENV_PATH=cai_env"
 ) else if exist "%USERPROFILE%\cai_env\Scripts\activate.bat" (
@@ -30,7 +51,7 @@ if exist "cai_env\Scripts\activate.bat" (
 echo [*] Activating environment: !VENV_PATH!...
 call "!VENV_PATH!\Scripts\activate.bat"
 
-:: 3. Check / Install CAI
+:: 5. Check / Install CAI
 where cai >nul 2>&1
 if %errorlevel% neq 0 (
     echo [*] Installing CAI framework (editable mode)...
@@ -38,7 +59,7 @@ if %errorlevel% neq 0 (
     pip install -e .
 )
 
-:: 4. Check Environment Configuration (.env)
+:: 6. Check Environment Configuration (.env)
 if not exist ".env" (
     if exist "%USERPROFILE%\.env" (
         echo [*] Found existing configuration in %USERPROFILE%\.env
@@ -50,10 +71,11 @@ if not exist ".env" (
     )
 )
 
-:: 5. Launch CAI
+:: 7. Launch CAI
 echo.
 echo ==============================================================================
 echo [*] Starting CAI...
+echo [*] Launching Web App Pentester (Agent 20)...
 echo ==============================================================================
 echo.
 
