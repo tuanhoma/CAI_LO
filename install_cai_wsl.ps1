@@ -41,7 +41,8 @@ if (-not $hasUbuntu) {
     Write-Host "`n[!] LUU Y: Khi cua so Ubuntu moi xuat hien, hay nhap Username va Password tuy chon cho Linux." -ForegroundColor Yellow
     Write-Host "Sau khi hoan tat tao user, hay chay lai script nay de tiep tuc cai dat CAI!" -ForegroundColor Cyan
     Exit
-} else {
+}
+else {
     Write-Host "[OK] Da tim thay ban phan phoi: $targetDistro" -ForegroundColor Green
 }
 
@@ -73,7 +74,8 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "Ban co the chay CAI bang 1 trong 2 cach:" -ForegroundColor Cyan
     Write-Host "1. Click dup vao file 'start_cai.bat' o thu muc nay tren Windows." -ForegroundColor White
     Write-Host "2. Mo terminal WSL (go 'wsl') va go lenh: cai" -ForegroundColor White
-} else {
+}
+else {
     Write-Host "`n[!] Co loi xay ra trong qua trinh cai dat (Exit code: $LASTEXITCODE)." -ForegroundColor Red
     Write-Host "Vui long kiem tra lai ket noi mang hoac quyen sudo trong WSL." -ForegroundColor Yellow
 }

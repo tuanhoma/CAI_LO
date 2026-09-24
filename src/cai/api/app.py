@@ -1026,4 +1026,41 @@ def create_cai_api_app(
         )
         return UXTitleLiteResponse(title=title)
 
+    # ------------------------------------------------------------------
+    # Optional local web dashboard (served only for loopback convenience).
+    # Enabled unless CAI_API_SERVE_UI is explicitly falsy. The directory is
+    # a static, read-only single-page UI that consumes the SSE endpoints.
+    # ------------------------------------------------------------------
+    if os.getenv("CAI_API_SERVE_UI", "true").lower() not in ("0", "false", "no"):
+        try:
+            from pathlib import Path
+            from fastapi.responses import FileResponse, RedirectResponse
+            from fastapi.staticfiles import StaticFiles
+
+            ui_dir = Path(
+                os.getenv("CAI_API_UI_DIR")
+                or (Path(__file__).resolve().parents[3] / "webui")
+            )
+            index_file = ui_dir / "index.html"
+            if index_file.is_file():
+                app.mount(
+                    "/ui/static",
+                    StaticFiles(directory=str(ui_dir)),
+                    name="cai-ui-static",
+                )
+
+                @app.get("/ui", include_in_schema=False)
+                @app.get("/ui/", include_in_schema=False)
+                def _serve_ui() -> FileResponse:  # noqa: D401
+                    return FileResponse(str(index_file))
+
+                @app.get("/", include_in_schema=False)
+                def _root_redirect() -> RedirectResponse:  # noqa: D401
+                    return RedirectResponse(url="/ui")
+        except Exception:
+            # UI is best-effort; never block API startup on it.
+            logging.getLogger("uvicorn.error").warning(
+                "CAI web UI could not be mounted", exc_info=True
+            )
+
     return app

@@ -1,0 +1,12 @@
+# Mặc định: Git tự chuẩn hoá text, nhị phân giữ nguyên
+* text=auto
+
+# Ép LF cho file chạy trong Linux/WSL — tránh lỗi "/bin/bash^M" khi clone trên Windows
+# (các dòng cụ thể phải NẰM SAU dòng '* text=auto' để thắng quyền)
+*.sh          text eol=lf
+.env.example  text eol=lf
+Makefile      text eol=lf
+
+# Windows scripts giữ CRLF
+*.bat text eol=crlf
+*.ps1 text eol=crlf
