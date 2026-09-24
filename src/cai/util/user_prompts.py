@@ -1564,6 +1564,13 @@ def _is_guard_enabled() -> bool:
         return False
     if _yolo_enabled():
         return False
+    if os.getenv("CAI_GUARDRAILS", "").lower() in ("0", "false", "no"):
+        return False
+    if os.getenv("CAI_API_MODE", "").lower() in ("1", "true", "yes"):
+        return False
+    import sys
+    if not sys.stdin or not hasattr(sys.stdin, "isatty") or not sys.stdin.isatty():
+        return False
     return os.getenv("CAI_SENSITIVE_GUARD", "true").lower() != "false"
 
 
