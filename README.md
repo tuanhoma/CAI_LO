@@ -67,7 +67,8 @@ chmod +x run_cai.sh
 
 ### 2. Bộ công cụ Pentest
 - **Windows:**
-  - Cài qua [Scoop](https://scoop.sh) hoặc Chocolatey:
+  - Chạy script tự động cài đặt: nhấp đúp file **`install_tools.bat`**
+  - Hoặc cài thủ công qua [Scoop](https://scoop.sh):
     ```powershell
     scoop install nmap sqlmap gobuster ffuf
     ```
