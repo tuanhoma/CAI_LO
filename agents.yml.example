@@ -1,0 +1,50 @@
+# Example universal agents.yml configuration file (used by both CLI and TUI)
+# Copy this to agents.yml and customize for your needs.
+
+# Optional human friendly description
+description: >-
+  Preload two blue-vs-red duos. Blue teamers operate inside the container (CTF_INSIDE=true)
+  while their opposing red teams remain outside (CTF_INSIDE=false). Both teams share the
+  same investigation prompt and begin running automatically when the UI starts.
+
+# Shared defaults applied when an agent entry omits the field
+shared:
+  prompt: >-
+    Perform a coordinated assessment of the target container. Blue teamers defend from inside,
+    red teams probe externally. Exchange findings and highlight attack paths and mitigations.
+  auto_run: true
+
+parallel_agents:
+  # Each entry represents one agent instance. Available keys:
+  #   name (required)  -> registered agent name (`cai --list-agents`)
+  #   team             -> grouping label shown in the TUI
+  #   prompt           -> overrides the shared prompt for this agent
+  #   model            -> optional model override
+  #   env              -> environment variables injected before launch
+  #   auto_run         -> whether to auto-execute the prompt on startup
+  #   unified_context  -> share history across agents in CLI parallel mode
+  - name: blueteam_agent
+    team: Team 1 - Defender vs Adversary
+    prompt: >-
+      Inside defender: inspect container services, collect telemetry, harden SSH.
+    auto_run: true
+    env:
+      CTF_INSIDE: true
+  - name: redteam_agent
+    team: Team 1 - Defender vs Adversary
+    prompt: >-
+      External adversary: enumerate open ports and attempt foothold.
+    env:
+      CTF_INSIDE: false
+  - name: blueteam_agent
+    team: Team 2 - Alternate Matchup
+    auto_run: true
+    env:
+      CTF_INSIDE: true
+  - name: redteam_agent
+    team: Team 2 - Alternate Matchup
+    prompt: >-
+      Standby attacker: wait for defender intel before moving.
+    auto_run: true
+    env:
+      CTF_INSIDE: false
