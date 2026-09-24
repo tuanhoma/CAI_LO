@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CAI · Agent Pentest Dashboard</title>
+<style>
+  :root {
+    --bg: #0a0e14;
+    --panel: #0f141c;
+    --panel-2: #131a24;
+    --border: #1e2733;
+    --text: #d7dee8;
+    --muted: #6b7787;
+    --accent: #3ddc84;
+    --accent-dim: #1f6f47;
+    --blue: #4ea1ff;
+    --red: #ff5c5c;
+    --red-bg: #2a1113;
+    --amber: #d9a441;
+    --amber-bg: #241a0d;
+    --mono: ui-monospace, "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--blue); }
+
+  .app {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 16px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  @media (min-width: 900px) {
+    .app { grid-template-columns: 400px 1fr; align-items: start; }
+    .col-left { position: sticky; top: 16px; }
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .panel + .panel { margin-top: 16px; }
+
+  /* header */
+  .hdr { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .hdr-title { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 0 rgba(61,220,132,.5); }
+  .dot.live { background: var(--accent); animation: pulse 1.8s infinite; }
+  .dot.err { background: var(--red); }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(61,220,132,.5)} 70%{box-shadow:0 0 0 8px rgba(61,220,132,0)} 100%{box-shadow:0 0 0 0 rgba(61,220,132,0)} }
+  .target { color: var(--muted); font-family: var(--mono); font-size: 12.5px; }
+  .target b { color: var(--text); font-weight: 600; }
+
+  /* status */
+  .status-label { color: var(--muted); font-size: 12px; margin: 14px 0 4px; }
+  .status-text { font-family: var(--mono); font-size: 15px; min-height: 22px; }
+  .progress { height: 4px; background: var(--panel-2); border-radius: 4px; overflow: hidden; margin-top: 12px; }
+  .progress > i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent-dim), var(--accent)); transition: width .4s ease; }
+
+  /* phases */
+  .phase { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+  .phase:last-child { border-bottom: 0; }
+  .phase .ic { width: 18px; height: 18px; flex: none; display: grid; place-items: center; border-radius: 50%; border: 1.5px solid var(--muted); font-size: 11px; color: var(--muted); }
+  .phase .nm { flex: 1; color: var(--muted); font-weight: 500; }
+  .phase .st { font-size: 12.5px; color: var(--muted); }
+  .phase[data-state="done"] .ic { border-color: var(--accent); color: var(--accent); background: rgba(61,220,132,.08); }
+  .phase[data-state="done"] .nm { color: var(--text); }
+  .phase[data-state="done"] .st { color: var(--accent); }
+  .phase[data-state="running"] .ic { border-color: var(--blue); color: var(--blue); animation: spin 1.2s linear infinite; }
+  .phase[data-state="running"] .nm { color: var(--text); }
+  .phase[data-state="running"] .st { color: var(--blue); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* severity */
+  .sev-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .sev { border-radius: 10px; padding: 12px 14px; border: 1px solid var(--border); }
+  .sev.high { background: var(--red-bg); border-color: #4a1d20; }
+  .sev.low  { background: var(--amber-bg); border-color: #3a2c12; }
+  .sev .cap { font-size: 12px; }
+  .sev.high .cap { color: #ff9a9a; }
+  .sev.low .cap  { color: #e6c377; }
+  .sev .num { font-size: 28px; font-weight: 700; margin-top: 2px; }
+  .sev.high .num { color: var(--red); }
+  .sev.low .num  { color: var(--amber); }
+
+  /* log */
+  .log-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .log-hdr h3 { margin: 0; font-size: 14px; font-weight: 600; }
+  .log-count { color: var(--muted); font-size: 12px; }
+  .log-wrap { position: relative; }
+  .log {
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
+    background: #070a0f; border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; height: 46vh; min-height: 260px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .log .ln { display: flex; gap: 10px; }
+  .log .ts { color: #4a586b; flex: none; }
+  .log .msg { flex: 1; color: var(--text); }
+  .log .ln.tool .msg { color: #cdd7e3; }
+  .log .ln.tool .msg .arrow { color: var(--blue); }
+  .log .ln.finding .msg { color: var(--text); }
+  .log .ln.high .msg { color: var(--red); }
+  .log .ln.med  .msg { color: var(--amber); }
+  .log .ln.agent .msg { color: var(--accent); }
+  .log .ln.handoff .msg { color: var(--blue); }
+  .log .ln.sys .msg { color: var(--muted); }
+  .log .ln.err .msg { color: var(--red); font-weight: 600; }
+  .tag { font-weight: 700; }
+  .scroll-btn {
+    position: absolute; right: 12px; bottom: 12px; width: 34px; height: 34px; border-radius: 50%;
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    display: grid; place-items: center; cursor: pointer; opacity: .9;
+  }
+  .scroll-btn:hover { background: #1b2430; }
+
+  /* controls */
+  .ctl label { display: block; font-size: 11.5px; color: var(--muted); margin: 10px 0 4px; text-transform: uppercase; letter-spacing: .04em; }
+  .ctl input, .ctl select, .ctl textarea {
+    width: 100%; background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 8px 10px; font-family: var(--sans); font-size: 13px;
+  }
+  .ctl textarea { font-family: var(--mono); resize: vertical; min-height: 64px; }
+  .ctl .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .btns { display: flex; gap: 10px; margin-top: 14px; }
+  button.primary, button.ghost {
+    flex: 1; padding: 10px 12px; border-radius: 8px; font-weight: 600; font-size: 13.5px; cursor: pointer; border: 1px solid transparent;
+  }
+  button.primary { background: var(--accent); color: #05130b; }
+  button.primary:hover { filter: brightness(1.06); }
+  button.primary:disabled { opacity: .45; cursor: not-allowed; }
+  button.ghost { background: transparent; border-color: var(--border); color: var(--text); }
+  button.ghost:hover { background: var(--panel-2); }
+  button.ghost:disabled { opacity: .4; cursor: not-allowed; }
+  .conn { font-size: 12px; color: var(--muted); margin-top: 10px; display: flex; align-items: center; gap: 7px; }
+  .conn .d { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .conn.ok .d { background: var(--accent); }
+  .conn.bad .d { background: var(--red); }
+  details.adv summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 12px; }
+  .hint { color: var(--muted); font-size: 11.5px; margin-top: 6px; }
+  .disclaimer { color: var(--muted); font-size: 11px; margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- LEFT: live monitor (matches mockup) -->
+  <div class="col-left">
+    <div class="panel">
+      <div class="hdr">
+        <div class="hdr-title"><span id="live-dot" class="dot"></span> <span id="agent-name">Agent pentest</span></div>
+        <div class="target">target: <b id="target-label">—</b></div>
+      </div>
+
+      <div class="status-label">Đang thực hiện</div>
+      <div class="status-text" id="status-text">Chưa bắt đầu</div>
+      <div class="progress"><i id="progress-bar"></i></div>
+    </div>
+
+    <div class="panel">
+      <div id="phases"></div>
+    </div>
+
+    <div class="panel">
+      <div class="sev-row">
+        <div class="sev high">
+          <div class="cap">Nghiêm trọng / Cao</div>
+          <div class="num" id="sev-high">0</div>
+        </div>
+        <div class="sev low">
+          <div class="cap">Trung bình / Thấp</div>
+          <div class="num" id="sev-low">0</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: controls + log -->
+  <div class="col-right">
+    <div class="panel ctl">
+      <label>Mục tiêu (target — chỉ hiển thị)</label>
+      <input id="in-target" placeholder="vd: 10.10.14.0/24 hoặc scope bạn ĐƯỢC PHÉP kiểm thử" />
+      <label>Chỉ thị cho agent (prompt)</label>
+      <textarea id="in-prompt" placeholder="vd: Thực hiện đánh giá bảo mật trên phạm vi được ủy quyền ở trên. Trinh sát, quét cổng, liệt kê dịch vụ, và báo cáo."></textarea>
+      <div class="row2">
+        <div>
+          <label>Agent</label>
+          <select id="in-agent"><option value="">(mặc định)</option></select>
+        </div>
+        <div>
+          <label>Max turns</label>
+          <input id="in-turns" type="number" value="30" min="1" />
+        </div>
+      </div>
+
+      <div class="btns">
+        <button class="primary" id="btn-start">▶ Bắt đầu</button>
+        <button class="ghost" id="btn-stop" disabled>■ Dừng</button>
+        <button class="ghost" id="btn-clear" style="flex:0 0 auto">Xóa log</button>
+      </div>
+
+      <div class="conn" id="conn"><span class="d"></span><span id="conn-text">Chưa kết nối</span></div>
+
+      <details class="adv">
+        <summary>Cấu hình kết nối API</summary>
+        <label>API base URL</label>
+        <input id="in-api" value="" placeholder="/ (cùng máy chủ) hoặc http://127.0.0.1:8000" />
+        <label>API key (bỏ trống nếu chạy dev-mode)</label>
+        <input id="in-key" type="password" placeholder="X-CAI-API-Key" />
+        <div class="hint">UI chỉ nên chạy nội bộ (127.0.0.1). Không mở ra Internet/LAN vì log có thể chứa dữ liệu nhạy cảm.</div>
+      </details>
+
+      <div class="disclaimer">
+        ⚠️ Chỉ dùng trên hệ thống bạn <b>sở hữu hoặc được ủy quyền bằng văn bản</b> để kiểm thử.
+        Bảng điều khiển này chỉ hiển thị log do backend CAI tạo ra — nó không tự chạy tấn công nào.
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="log-hdr">
+        <h3>Log agent</h3>
+        <span class="log-count" id="log-count">0 dòng</span>
+      </div>
+      <div class="log-wrap">
+        <div class="log" id="log"></div>
+        <div class="scroll-btn" id="scroll-btn" title="Xuống cuối">↓</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------ *
+ * Phase model + heuristics (derive phases/severity from the SSE stream)
+ * ------------------------------------------------------------------ */
+const PHASES = [
+  { key: "recon",   label: "Trinh sát",     kw: /\b(whois|dnsrecon|dnsenum|sublist3r|subfinder|amass|theharvester|dig|host|nslookup|recon|osint|passive)\b/i },
+  { key: "scan",    label: "Quét cổng",     kw: /\b(nmap|masscan|rustscan|naabu|port ?scan|-p-|-sV|-sS)\b/i },
+  { key: "enum",    label: "Liệt kê dịch vụ", kw: /\b(gobuster|ffuf|feroxbuster|dirb|dirbuster|nikto|whatweb|enum4linux|smbclient|smbmap|snmpwalk|wpscan|enumerat|liệt kê|dịch vụ|banner)\b/i },
+  { key: "exploit", label: "Khai thác",     kw: /\b(nuclei|sqlmap|metasploit|msfconsole|exploit|payload|cve-|rce|sqli|xss|lfi|rfi|ssrf|deserial|khai thác)\b/i },
+  { key: "post",    label: "Hậu khai thác", kw: /\b(privesc|linpeas|winpeas|mimikatz|credential|creds|loot|pivot|persistence|hashdump|\/etc\/shadow|config|shell|hậu khai thác|thu thập)\b/i },
+  { key: "report",  label: "Báo cáo",       kw: /\b(report|reporter|báo cáo|summary|tổng hợp|finding list)\b/i },
+];
+
+// severity keyword rules — first match wins
+const SEV_RULES = [
+  { level: "high", re: /\b(rce|remote code|web ?shell|reverse shell|unauth|unauthenticated|no ?auth|không mật khẩu|không cần xác thực|sql ?inject|sqli|critical|nghiêm trọng|cve-\d{4}-\d+|default cred|hard-?coded|exposed .*(key|secret|password)|leak(ed)? credential|domain admin|root shell)\b/i },
+  { level: "med",  re: /\b(medium|low|info|informational|banner|version disclos|outdated|misconfig|directory listing|verbose error|self-signed|weak cipher|trung bình|thấp)\b/i },
+];
+
+function classifySeverity(text) {
+  if (!text) return null;
+  for (const r of SEV_RULES) if (r.re.test(text)) return r.level;
+  return null;
+}
+function detectPhase(text) {
+  if (!text) return -1;
+  let idx = -1;
+  PHASES.forEach((p, i) => { if (p.kw.test(text)) idx = Math.max(idx, i); });
+  return idx;
+}
+
+/* ------------------------------------------------------------------ *
+ * State
+ * ------------------------------------------------------------------ */
+const state = {
+  running: false,
+  ended: false,      // đã nhận 'final'/kết thúc — chống lật trạng thái nhiều lần
+  errored: false,    // lần chạy này có lỗi stream/kết nối
+  abort: null,
+  sessionId: null,
+  savedAgent: null,  // agent khôi phục từ localStorage (áp sau khi nạp danh sách)
+  maxPhase: -1,
+  sevHigh: 0,
+  sevLow: 0,
+  seenFindings: new Set(),
+  logLines: 0,
+  autoscroll: true,
+};
+
+/* ------------------------------------------------------------------ *
+ * localStorage config (QW4) — nhớ cấu hình; KHÔNG bao giờ lưu API key
+ * ------------------------------------------------------------------ */
+const LS_KEY = "cai-dash-cfg";
+function saveCfg() {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify({
+      api: $("in-api").value, agent: $("in-agent").value,
+      turns: $("in-turns").value, target: $("in-target").value,
+      prompt: $("in-prompt").value,
+    }));
+  } catch (_) { /* cửa sổ ẩn danh / bị chặn — bỏ qua */ }
+}
+function loadCfg() {
+  let cfg = null;
+  try { cfg = JSON.parse(localStorage.getItem(LS_KEY) || "null"); } catch (_) {}
+  if (!cfg) return;
+  if (cfg.api != null) $("in-api").value = cfg.api;
+  if (cfg.turns) $("in-turns").value = cfg.turns;
+  if (cfg.target != null) $("in-target").value = cfg.target;
+  if (cfg.prompt != null) $("in-prompt").value = cfg.prompt;
+  state.savedAgent = cfg.agent || null; // áp sau khi loadAgents() điền option
+}
+
+/* ------------------------------------------------------------------ *
+ * DOM helpers
+ * ------------------------------------------------------------------ */
+const $ = (id) => document.getElementById(id);
+const logEl = $("log");
+
+function apiBase() {
+  const v = $("in-api").value.trim();
+  return v.replace(/\/+$/, "");
+}
+function headers(extra) {
+  const h = Object.assign({ "Content-Type": "application/json" }, extra || {});
+  const key = $("in-key").value.trim();
+  if (key) h["X-CAI-API-Key"] = key;
+  return h;
+}
+function nowTs() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
+}
+
+function addLog(kind, html, sevLevel) {
+  const ln = document.createElement("div");
+  ln.className = "ln " + kind + (sevLevel === "high" ? " high" : sevLevel === "med" ? " med" : "");
+  ln.innerHTML = `<span class="ts">${nowTs()}</span><span class="msg">${html}</span>`;
+  logEl.appendChild(ln);
+  state.logLines++;
+  $("log-count").textContent = state.logLines + " dòng";
+  if (state.autoscroll) logEl.scrollTop = logEl.scrollHeight;
+}
+
+/* ------------------------------------------------------------------ *
+ * Phase / severity UI
+ * ------------------------------------------------------------------ */
+function renderPhases() {
+  const wrap = $("phases");
+  wrap.innerHTML = "";
+  PHASES.forEach((p, i) => {
+    let stateName = "pending", label = "chờ", icon = "";
+    if (i < state.maxPhase) { stateName = "done"; label = "xong"; icon = "✓"; }
+    else if (i === state.maxPhase) { stateName = state.running ? "running" : "done"; label = state.running ? "đang chạy" : "xong"; icon = state.running ? "◠" : "✓"; }
+    const row = document.createElement("div");
+    row.className = "phase";
+    row.setAttribute("data-state", stateName);
+    row.innerHTML = `<span class="ic">${icon}</span><span class="nm">${p.label}</span><span class="st">${label}</span>`;
+    wrap.appendChild(row);
+  });
+  const pct = state.maxPhase < 0 ? 0 : Math.round(((state.maxPhase + (state.running ? 0.5 : 1)) / PHASES.length) * 100);
+  $("progress-bar").style.width = Math.min(100, pct) + "%";
+}
+function bumpPhase(text) {
+  const idx = detectPhase(text);
+  if (idx > state.maxPhase) { state.maxPhase = idx; renderPhases(); }
+  return idx;
+}
+function countSeverity(text) {
+  const level = classifySeverity(text);
+  if (!level) return null;
+  const sig = level + ":" + text.trim().slice(0, 120).toLowerCase();
+  if (state.seenFindings.has(sig)) return level;
+  state.seenFindings.add(sig);
+  if (level === "high") { state.sevHigh++; $("sev-high").textContent = state.sevHigh; }
+  else { state.sevLow++; $("sev-low").textContent = state.sevLow; }
+  return level;
+}
+
+/* ------------------------------------------------------------------ *
+ * Stream event handling
+ * ------------------------------------------------------------------ */
+function truncate(s, n) { s = String(s); return s.length > n ? s.slice(0, n) + "…" : s; }
+
+function handleStep(step) {
+  const t = step.type;
+  if (t === "agent_switched") {
+    $("agent-name").textContent = step.agent || "Agent pentest";
+    addLog("agent", `→ agent: <b>${escapeHtml(step.agent || "?")}</b>`);
+    bumpPhase(step.agent || "");
+  } else if (t === "handoff") {
+    addLog("handoff", `handoff: ${escapeHtml(step.from_agent||"?")} → ${escapeHtml(step.to_agent||"?")}`);
+    bumpPhase((step.to_agent || "") + " " + (step.from_agent || ""));
+  } else if (t === "tool_call") {
+    let args = step.arguments;
+    try { if (typeof args === "string") args = JSON.parse(args); } catch (_) {}
+    const argStr = args && typeof args === "object"
+      ? Object.values(args).map((v) => truncate(v, 60)).join(" ")
+      : truncate(step.arguments || "", 80);
+    // QW3: nâng phase theo TÊN TOOL (trường có cấu trúc), không quét args
+    bumpPhase(step.tool || "");
+    addLog("tool", `<span class="arrow">${escapeHtml(step.tool||"tool")}</span> ${escapeHtml(argStr)}`);
+    $("status-text").textContent = truncate(`${step.tool || "tool"} ${argStr}`, 90);
+  } else if (t === "tool_output") {
+    const out = truncate(step.output || "", 400);
+    // QW3: KHÔNG nâng phase theo text output (nguồn nhảy phase ảo); chỉ đếm severity
+    const level = countSeverity(out);
+    const kind = level ? "finding" : "sys";
+    const tag = level === "high" ? ` <span class="tag">[CAO]</span>` : level === "med" ? ` <span class="tag">[TB]</span>` : "";
+    addLog(kind, escapeHtml(truncate(out.replace(/\s+/g, " "), 220)) + tag, level);
+  } else if (t === "message") {
+    const txt = (step.text || "").replace(/\s+/g, " ").trim();
+    if (!txt) return;
+    bumpPhase(txt); // message là lời tường thuật của agent — cho phép làm fallback
+    const level = countSeverity(txt);
+    const tag = level === "high" ? ` <span class="tag">[CAO]</span>` : level === "med" ? ` <span class="tag">[TB]</span>` : "";
+    $("status-text").textContent = truncate(txt, 90);
+    addLog(level ? "finding" : "agent", escapeHtml(truncate(txt, 240)) + tag, level);
+  } else if (step && step.raw != null) {
+    addLog("sys", "· khung SSE không đọc được");   // QW5: không render "undefined"
+  } else if (t) {
+    addLog("sys", escapeHtml(String(t)));
+  }
+  // else: khung rỗng/không rõ — bỏ qua
+}
+
+function handleFinal(data) {
+  state.maxPhase = PHASES.length - 1; // report done
+  addLog("sys", `<b>Hoàn tất.</b> ${escapeHtml(truncate((data && data.final_message) || "", 160))}`);
+  markEnded(); // QW1: giải phóng UI ngay khi có 'final', không chờ socket đóng
+}
+
+/* ------------------------------------------------------------------ *
+ * SSE over fetch (POST) — parse "event:"/"data:" frames from the stream
+ * ------------------------------------------------------------------ */
+async function readSSE(resp) {
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let sep;
+    while ((sep = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, sep);
+      buf = buf.slice(sep + 2);
+      let ev = "message", dataLines = [];
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("event:")) ev = line.slice(6).trim();
+        else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+      }
+      if (!dataLines.length) continue;
+      let data;
+      try { data = JSON.parse(dataLines.join("\n")); } catch (_) { data = { raw: dataLines.join("\n") }; }
+      if (ev === "reasoning_step") handleStep(data);
+      else if (ev === "final") {
+        handleFinal(data);
+        try { await reader.cancel(); } catch (_) {}  // QW1: ngừng đọc, không nuốt sự kiện của lần chạy lặp (backend)
+        return;
+      }
+      else if (ev === "error") {
+        state.errored = true;                        // QW2
+        $("live-dot").className = "dot err";
+        addLog("err", "lỗi: " + escapeHtml(data.message || JSON.stringify(data)));
+      }
+      else handleStep(data);
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Run control
+ * ------------------------------------------------------------------ */
+async function api(path, opts) {
+  const res = await fetch(apiBase() + path, opts);
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`HTTP ${res.status} ${path} — ${truncate(txt, 160)}`);
+  }
+  return res;
+}
+
+function setConn(kind, text) {
+  const el = $("conn");
+  el.className = "conn " + (kind || "");
+  $("conn-text").textContent = text;
+}
+
+async function loadAgents() {
+  try {
+    const res = await api("/api/v1/agents", { headers: headers() });
+    const data = await res.json();
+    const sel = $("in-agent");
+    while (sel.options.length > 1) sel.remove(1); // giữ "(mặc định)", tránh trùng khi gọi lại
+    (data.agents || []).forEach((a) => {
+      const o = document.createElement("option");
+      o.value = a.name; o.textContent = a.name + (a.type === "pattern" ? " (pattern)" : "");
+      sel.appendChild(o);
+    });
+    if (state.savedAgent) sel.value = state.savedAgent; // QW4: khôi phục agent đã lưu
+    setConn("ok", `Đã kết nối · ${(data.agents||[]).length} agent`);
+  } catch (e) {
+    setConn("bad", "Chưa kết nối được API: " + e.message);
+  }
+}
+
+async function start() {
+  if (state.running) return;
+  const prompt = $("in-prompt").value.trim();
+  const target = $("in-target").value.trim();
+  if (!prompt) { $("in-prompt").focus(); return; }
+
+  // reset run state
+  state.running = true; state.ended = false; state.errored = false;
+  state.maxPhase = -1; state.sevHigh = 0; state.sevLow = 0;
+  state.seenFindings.clear();
+  $("sev-high").textContent = "0"; $("sev-low").textContent = "0";
+  $("target-label").textContent = target || "—";
+  $("live-dot").className = "dot live";
+  $("btn-start").disabled = true; $("btn-stop").disabled = false;
+  $("status-text").textContent = "Khởi tạo phiên…";
+  renderPhases();
+
+  state.abort = new AbortController();
+  try {
+    const agent = $("in-agent").value || undefined;
+    const cs = await api("/api/v1/sessions", {
+      method: "POST", headers: headers(),
+      body: JSON.stringify({ agent, stateful: true, metadata: { target: target || null, ui: "cai-dashboard" } }),
+      signal: state.abort.signal,
+    });
+    const session = await cs.json();
+    state.sessionId = session.id;
+    addLog("sys", `phiên: <b>${escapeHtml(session.id)}</b> · agent: ${escapeHtml(session.agent||"?")} · model: ${escapeHtml(session.model||"?")}`);
+    $("agent-name").textContent = session.agent || "Agent pentest";
+
+    const turns = parseInt($("in-turns").value, 10) || 30;
+    const composed = target ? `${prompt}\n\n[Target / scope: ${target}]` : prompt;
+    const stream = await api(`/api/v1/sessions/${encodeURIComponent(session.id)}/messages/stream`, {
+      method: "POST", headers: headers({ "Accept": "text/event-stream" }),
+      body: JSON.stringify({ input: composed, max_turns: turns }),
+      signal: state.abort.signal,
+    });
+    await readSSE(stream);
+  } catch (e) {
+    if (e.name === "AbortError") addLog("sys", "đã dừng bởi người dùng.");
+    else {
+      state.errored = true;  // QW2: phân biệt lỗi (chấm đỏ) với kết thúc bình thường
+      const msg = /Failed to fetch|NetworkError|ERR_/i.test(e.message || "")
+        ? "Không kết nối được backend (kiểm tra server đang chạy / API base URL)."
+        : e.message;
+      addLog("err", "lỗi: " + escapeHtml(msg));
+    }
+  } finally {
+    finishRun();
+  }
+}
+
+function markEnded() {
+  if (state.ended) return;             // chỉ lật một lần
+  state.ended = true;
+  state.running = false;
+  $("live-dot").className = state.errored ? "dot err" : "dot";  // QW2
+  $("btn-start").disabled = false; $("btn-stop").disabled = true;
+  renderPhases();
+  if ($("status-text").textContent === "Khởi tạo phiên…") $("status-text").textContent = "Kết thúc";
+}
+function finishRun() { markEnded(); }
+
+async function stop() {
+  if (state.abort) state.abort.abort();
+  if (state.sessionId) {
+    try { await api(`/api/v1/sessions/${encodeURIComponent(state.sessionId)}/interrupt`, { method: "POST", headers: headers() }); }
+    catch (_) {}
+  }
+}
+
+function clearLog() {
+  logEl.innerHTML = ""; state.logLines = 0; $("log-count").textContent = "0 dòng";
+}
+
+/* ------------------------------------------------------------------ *
+ * Wire up
+ * ------------------------------------------------------------------ */
+$("btn-start").addEventListener("click", start);
+$("btn-stop").addEventListener("click", stop);
+$("btn-clear").addEventListener("click", clearLog);
+$("scroll-btn").addEventListener("click", () => { state.autoscroll = true; logEl.scrollTop = logEl.scrollHeight; });
+logEl.addEventListener("scroll", () => {
+  const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
+  state.autoscroll = atBottom;
+});
+// QW4: lưu cấu hình khi thay đổi (không lưu API key)
+["in-api", "in-agent", "in-turns", "in-target", "in-prompt"].forEach((id) => {
+  const evt = (id === "in-agent" || id === "in-turns") ? "change" : "input";
+  $(id).addEventListener(evt, saveCfg);
+});
+$("in-api").addEventListener("change", loadAgents);
+$("in-key").addEventListener("change", loadAgents);
+
+// QW5: phím tắt — Ctrl/Cmd+Enter = Bắt đầu, Esc = Dừng
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    e.preventDefault();
+    if (!state.running) start();
+  } else if (e.key === "Escape" && state.running) {
+    e.preventDefault();
+    stop();
+  }
+});
+
+loadCfg();       // QW4: nạp cấu hình trước để loadAgents() dùng đúng API base
+renderPhases();
+loadAgents();
+</script>
+</body>
+</html>

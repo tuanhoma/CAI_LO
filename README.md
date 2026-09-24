@@ -19,6 +19,17 @@
 
 ---
 
+## 🖥️ Web Dashboard (xem log tấn công trực tiếp)
+
+Dự án có **bảng điều khiển web cục bộ** hiển thị tiến trình agent theo thời gian thực (các pha recon → scan → enum → exploit → post → report, đếm mức độ nghiêm trọng, log agent màu hoá).
+
+- **Yêu cầu:** CAI chạy trên **WSL2/Linux** (không chạy được trên Windows thuần).
+- **Cài & chạy:** xem **[HD_CAI_DAT.md](HD_CAI_DAT.md)** — tóm tắt: `bash install_cai_linux.sh` → điền `.env` → `bash run_webui.sh` (hoặc bấm `run_webui.bat` trên Windows) → mở `http://127.0.0.1:8000/ui`.
+- **Chỉ chạy loopback (`127.0.0.1`)** — không mở ra LAN/Internet vì log có thể chứa credential.
+- Tài liệu thêm: [HD_MUC_TIEU_PENTEST.md](HD_MUC_TIEU_PENTEST.md) (nhắm mục tiêu IP/web/PortSwigger/OffSec/HTB/CTF + VPN trong WSL2) · [webui/ROADMAP.md](webui/ROADMAP.md).
+
+---
+
 ## ⚡ Hướng Dẫn Cài Đặt & Chạy 1-Click (Tải về dùng ngay)
 
 Dự án đã được đóng gói sẵn script tự động kiểm tra môi trường, tạo virtual environment (`cai_env`), cài đặt dependencies và cấu hình mặc định.

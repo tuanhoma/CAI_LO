@@ -15,10 +15,22 @@ echo -e "${BLUE}====================================================${NC}"
 echo -e "${BLUE}    🚀 BẮT ĐẦU CÀI ĐẶT TỰ ĐỘNG CAI TRONG WSL UBUNTU   ${NC}"
 echo -e "${BLUE}====================================================${NC}"
 
+# 0. Phải chạy bằng USER THƯỜNG (không phải root/sudo).
+#    Nếu chạy bằng sudo, $HOME=/root -> venv vào /root/.cai_env, không khớp với
+#    run_webui.sh (tìm ~/.cai_env của user). Script tự gọi sudo cho phần apt.
+if [ "$(id -u)" -eq 0 ]; then
+    echo -e "${RED}[!] Đừng chạy bằng root/sudo.${NC} Hãy chạy: ${YELLOW}bash install_cai_linux.sh${NC}"
+    echo -e "    (Script sẽ tự hỏi mật khẩu sudo cho phần cài gói hệ thống.)"
+    exit 1
+fi
+if ! sudo -v; then
+    echo -e "${RED}[!] Cần quyền sudo để cài gói hệ thống.${NC}"; exit 1
+fi
+
 # 1. Cập nhật apt và cài đặt các gói hệ thống
 echo -e "\n${YELLOW}[1/6] Đang cập nhật gói hệ thống và cài đặt phụ thuộc...${NC}"
-apt-get update -y
-DEBIAN_FRONTEND=noninteractive apt-get install -y \
+sudo apt-get update -y
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
     build-essential \
     pkg-config \
     git \
@@ -41,23 +53,22 @@ echo -e "\n${YELLOW}[3/6] Khởi tạo Python virtual environment (Python 3.12) 
 uv venv --python 3.12 "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 
-# 4. Xác định thư mục chứa mã nguồn CAI trên Windows mount
-CAI_WIN_DIR="/mnt/c/Users/Tuan Anh/cai-project/cai"
-if [ ! -d "$CAI_WIN_DIR" ]; then
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    if [ -d "$SCRIPT_DIR/cai" ]; then
-        CAI_WIN_DIR="$SCRIPT_DIR/cai"
-    elif [ -d "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
-        CAI_WIN_DIR="$SCRIPT_DIR"
-    fi
+# 4. Xác định thư mục mã nguồn CAI = chính thư mục chứa script này (thư mục clone)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
+    CAI_SRC="$SCRIPT_DIR"
+elif [ -f "$SCRIPT_DIR/cai/pyproject.toml" ]; then
+    CAI_SRC="$SCRIPT_DIR/cai"
+else
+    CAI_SRC=""
 fi
 
-echo -e "${GREEN}✓ Đã xác định thư mục mã nguồn CAI:${NC} $CAI_WIN_DIR"
+echo -e "${GREEN}✓ Đã xác định thư mục mã nguồn CAI:${NC} ${CAI_SRC:-'(không thấy - sẽ cài từ PyPI)'}"
 
-# 5. Cài đặt CAI
+# 5. Cài đặt CAI (editable từ mã nguồn clone)
 echo -e "\n${YELLOW}[4/6] Đang cài đặt CAI Framework từ mã nguồn local...${NC}"
-if [ -d "$CAI_WIN_DIR" ]; then
-    uv pip install -e "$CAI_WIN_DIR"
+if [ -n "$CAI_SRC" ]; then
+    uv pip install -e "$CAI_SRC"
 else
     echo -e "${YELLOW}Cài đặt bản phát hành cai-framework từ PyPI...${NC}"
     uv pip install "cai-framework"
@@ -111,6 +122,13 @@ fi
 # Đồng bộ file .env vào ~/.cai/.env
 cp -f "$ENV_FILE" "$HOME/.cai/.env"
 
+# Tạo .env ở thư mục repo (Web Dashboard / API server nạp cấu hình từ đây khi
+# chạy run_webui.sh) từ .env.example nếu chưa có.
+if [ -n "$CAI_SRC" ] && [ -f "$CAI_SRC/.env.example" ] && [ ! -f "$CAI_SRC/.env" ]; then
+    cp "$CAI_SRC/.env.example" "$CAI_SRC/.env"
+    echo -e "${GREEN}✓ Đã tạo${NC} $CAI_SRC/.env ${GREEN}từ .env.example${NC} — hãy điền API key vào đây cho Dashboard."
+fi
+
 # 6. Tạo lệnh `cai` toàn cục trong WSL
 echo -e "\n${YELLOW}[6/6] Đang tạo script khởi chạy nhanh toàn cục...${NC}"
 mkdir -p "$HOME/.local/bin"
@@ -148,6 +166,10 @@ echo -e "\n${GREEN}====================================================${NC}"
 echo -e "${GREEN}    🎉 CÀI ĐẶT CAI TRONG WSL HOÀN TẤT THÀNH CÔNG!     ${NC}"
 echo -e "${GREEN}====================================================${NC}"
 echo -e "Cách sử dụng:"
-echo -e "1. Chỉnh sửa API Key trong file: ${BLUE}$ENV_FILE${NC} (ví dụ: nano $ENV_FILE)"
-echo -e "2. Gõ lệnh: ${YELLOW}cai${NC} từ bất kỳ đâu trong WSL để bắt đầu trải nghiệm!"
+echo -e "1. Điền API Key vào file .env:"
+echo -e "     • CLI  : ${BLUE}$ENV_FILE${NC}"
+[ -n "$CAI_SRC" ] && echo -e "     • Dashboard: ${BLUE}$CAI_SRC/.env${NC}"
+echo -e "2. CLI     : gõ ${YELLOW}cai${NC} từ bất kỳ đâu trong WSL."
+[ -n "$CAI_SRC" ] && echo -e "3. Dashboard: ${YELLOW}bash $CAI_SRC/run_webui.sh${NC} rồi mở http://127.0.0.1:8000/ui"
+[ -n "$CAI_SRC" ] && echo -e "4. (tuỳ chọn) Bộ công cụ pentest: ${YELLOW}bash $CAI_SRC/install_pentest_tools.sh${NC}"
 echo -e ""
