@@ -160,6 +160,31 @@
   }
   .ctl textarea { font-family: var(--mono); resize: vertical; min-height: 64px; }
   .ctl .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  /* combobox model (ô gõ tìm + danh sách cuộn) */
+  .combo { position: relative; }
+  .combo-panel {
+    position: absolute; z-index: 60; left: 0; right: 0; top: calc(100% + 4px);
+    max-height: 300px; overflow-y: auto; overscroll-behavior: contain;
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 12px 34px rgba(0,0,0,.55);
+  }
+  .combo-panel[hidden] { display: none; }
+  .combo-count {
+    position: sticky; top: 0; z-index: 1; padding: 6px 10px; font-size: 11px;
+    color: var(--muted); background: var(--panel-2); border-bottom: 1px solid var(--border);
+  }
+  .combo-item {
+    padding: 7px 10px; cursor: pointer; font-size: 12.5px; display: flex;
+    align-items: baseline; justify-content: space-between; gap: 10px;
+  }
+  .combo-item:hover, .combo-item.active { background: #1b2430; }
+  .combo-item .ci-name { color: var(--text); font-family: var(--mono); word-break: break-all; }
+  .combo-item .ci-prov { color: var(--muted); font-size: 10.5px; flex: none; white-space: nowrap; }
+  .combo-empty { padding: 9px 10px; color: var(--muted); font-size: 12px; }
+  /* thanh trượt gọn cho panel */
+  .combo-panel::-webkit-scrollbar { width: 10px; }
+  .combo-panel::-webkit-scrollbar-thumb { background: #2a3646; border-radius: 6px; border: 2px solid var(--panel-2); }
+  .combo-panel::-webkit-scrollbar-thumb:hover { background: #3a4a5e; }
   .btns { display: flex; gap: 10px; margin-top: 14px; }
   button.primary, button.ghost {
     flex: 1; padding: 10px 12px; border-radius: 8px; font-weight: 600; font-size: 13.5px; cursor: pointer; border: 1px solid transparent;
@@ -223,13 +248,18 @@
       <div class="row2">
         <div>
           <label>Agent</label>
-          <select id="in-agent"><option value="">(mặc định)</option></select>
+          <select id="in-agent"><option value="">(tự động)</option></select>
         </div>
         <div>
-          <label>Max turns</label>
-          <input id="in-turns" type="number" value="30" min="1" />
+          <label>Model (LLM) — gõ để tìm / tự nhập</label>
+          <div class="combo" id="model-combo">
+            <input id="in-model" autocomplete="off" placeholder="(tự động — theo .env)" />
+            <div class="combo-panel" id="model-panel" hidden></div>
+          </div>
         </div>
       </div>
+      <label>Max turns</label>
+      <input id="in-turns" type="number" value="30" min="1" />
 
       <div class="btns">
         <button class="primary" id="btn-start">▶ Bắt đầu</button>
@@ -313,6 +343,7 @@ const state = {
   abort: null,
   sessionId: null,
   savedAgent: null,  // agent khôi phục từ localStorage (áp sau khi nạp danh sách)
+  savedModel: null,  // model khôi phục từ localStorage (áp sau khi nạp danh sách)
   maxPhase: -1,
   sevHigh: 0,
   sevLow: 0,
@@ -329,6 +360,7 @@ function saveCfg() {
   try {
     localStorage.setItem(LS_KEY, JSON.stringify({
       api: $("in-api").value, agent: $("in-agent").value,
+      model: $("in-model").value,
       turns: $("in-turns").value, target: $("in-target").value,
       prompt: $("in-prompt").value,
     }));
@@ -343,6 +375,7 @@ function loadCfg() {
   if (cfg.target != null) $("in-target").value = cfg.target;
   if (cfg.prompt != null) $("in-prompt").value = cfg.prompt;
   state.savedAgent = cfg.agent || null; // áp sau khi loadAgents() điền option
+  state.savedModel = cfg.model || null; // áp sau khi loadModels() điền option
 }
 
 /* ------------------------------------------------------------------ *
@@ -584,6 +617,81 @@ async function loadAgents() {
   }
 }
 
+let ALL_MODELS = []; // {name, prov} nạp từ /api/v1/models
+async function loadModels() {
+  // Ô model là input tự do: khôi phục giá trị đã lưu (kể cả model tự nhập, không có trong list)
+  if (state.savedModel != null && !$("in-model").value) $("in-model").value = state.savedModel;
+  try {
+    const res = await api("/api/v1/models", { headers: headers() });
+    const data = await res.json();
+    ALL_MODELS = (data.models || [])
+      .filter((m) => m.name)
+      .map((m) => ({ name: m.name, prov: [m.provider, m.category].filter(Boolean).join(" · ") }))
+      .sort((a, b) => a.prov.localeCompare(b.prov) || a.name.localeCompare(b.name));
+  } catch (_) { ALL_MODELS = []; /* /models lỗi thì vẫn gõ tự do được */ }
+}
+
+/* ------------------------------------------------------------------ *
+ * Combobox model: ô gõ tìm + danh sách cuộn (thanh trượt), click/Enter chọn
+ * ------------------------------------------------------------------ */
+const MODEL_RENDER_CAP = 300; // chỉ render tối đa 300 dòng cho nhẹ; gõ để lọc tiếp
+let comboItems = [];          // model đang hiển thị trong panel
+let comboActive = -1;         // dòng đang highlight (phím mũi tên)
+
+function comboFilter(q) {
+  q = (q || "").trim().toLowerCase();
+  if (!q) return ALL_MODELS;
+  return ALL_MODELS.filter((m) => m.name.toLowerCase().includes(q) || m.prov.toLowerCase().includes(q));
+}
+function comboRender() {
+  const panel = $("model-panel");
+  const list = comboFilter($("in-model").value);
+  comboItems = list.slice(0, MODEL_RENDER_CAP);
+  comboActive = -1;
+  const more = list.length > MODEL_RENDER_CAP ? ` · hiện ${MODEL_RENDER_CAP} đầu, gõ để lọc tiếp` : "";
+  let html = `<div class="combo-count">${list.length} model${more}</div>`;
+  if (!comboItems.length) {
+    html += `<div class="combo-empty">Không có gợi ý khớp — bạn vẫn có thể gõ model tự do rồi Bắt đầu.</div>`;
+  } else {
+    html += comboItems.map((m, i) =>
+      `<div class="combo-item" data-i="${i}"><span class="ci-name">${escapeHtml(m.name)}</span><span class="ci-prov">${escapeHtml(m.prov)}</span></div>`
+    ).join("");
+  }
+  panel.innerHTML = html;
+  panel.hidden = false;
+}
+function comboHide() { $("model-panel").hidden = true; comboActive = -1; }
+function comboPick(i) {
+  if (i < 0 || i >= comboItems.length) return;
+  $("in-model").value = comboItems[i].name;
+  saveCfg();
+  comboHide();
+}
+function comboSetActive(i) {
+  const els = $("model-panel").querySelectorAll(".combo-item");
+  els.forEach((el) => el.classList.remove("active"));
+  if (i >= 0 && els[i]) { els[i].classList.add("active"); els[i].scrollIntoView({ block: "nearest" }); }
+  comboActive = i;
+}
+function setupModelCombo() {
+  const inp = $("in-model"), panel = $("model-panel");
+  inp.addEventListener("focus", comboRender);
+  inp.addEventListener("input", comboRender);
+  inp.addEventListener("keydown", (e) => {
+    if (panel.hidden) return; // panel đóng: để phím tắt toàn cục (Esc dừng…) xử lý
+    if (e.key === "ArrowDown") { e.preventDefault(); comboSetActive(Math.min(comboActive + 1, comboItems.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); comboSetActive(Math.max(comboActive - 1, 0)); }
+    else if (e.key === "Enter" && comboActive >= 0) { e.preventDefault(); comboPick(comboActive); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); comboHide(); }
+  });
+  inp.addEventListener("blur", () => setTimeout(comboHide, 150)); // trễ để kịp bắt click
+  // dùng mousedown + preventDefault để chọn TRƯỚC khi input blur làm ẩn panel
+  panel.addEventListener("mousedown", (e) => {
+    const it = e.target.closest(".combo-item");
+    if (it) { e.preventDefault(); comboPick(parseInt(it.dataset.i, 10)); }
+  });
+}
+
 async function start() {
   if (state.running) return;
   const prompt = $("in-prompt").value.trim();
@@ -604,9 +712,10 @@ async function start() {
   state.abort = new AbortController();
   try {
     const agent = $("in-agent").value || undefined;
+    const model = $("in-model").value || undefined;  // để trống = tự động (theo .env)
     const cs = await api("/api/v1/sessions", {
       method: "POST", headers: headers(),
-      body: JSON.stringify({ agent, stateful: true, metadata: { target: target || null, ui: "cai-dashboard" } }),
+      body: JSON.stringify({ agent, model, stateful: true, metadata: { target: target || null, ui: "cai-dashboard" } }),
       signal: state.abort.signal,
     });
     const session = await cs.json();
@@ -682,12 +791,12 @@ logEl.addEventListener("scroll", () => {
   state.autoscroll = atBottom;
 });
 // QW4: lưu cấu hình khi thay đổi (không lưu API key)
-["in-api", "in-agent", "in-turns", "in-target", "in-prompt"].forEach((id) => {
-  const evt = (id === "in-agent" || id === "in-turns") ? "change" : "input";
+["in-api", "in-agent", "in-model", "in-turns", "in-target", "in-prompt"].forEach((id) => {
+  const evt = (id === "in-target" || id === "in-prompt" || id === "in-api" || id === "in-model") ? "input" : "change";
   $(id).addEventListener(evt, saveCfg);
 });
-$("in-api").addEventListener("change", loadAgents);
-$("in-key").addEventListener("change", loadAgents);
+$("in-api").addEventListener("change", () => { loadAgents(); loadModels(); });
+$("in-key").addEventListener("change", () => { loadAgents(); loadModels(); });
 
 // QW5: phím tắt — Ctrl/Cmd+Enter = Bắt đầu, Esc = Dừng
 document.addEventListener("keydown", (e) => {
@@ -700,9 +809,11 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-loadCfg();       // QW4: nạp cấu hình trước để loadAgents() dùng đúng API base
+loadCfg();       // QW4: nạp cấu hình trước để loadAgents()/loadModels() dùng đúng API base
 renderPhases();
+setupModelCombo(); // combobox model (gõ tìm + panel cuộn)
 loadAgents();
+loadModels();
 </script>
 </body>
 </html>

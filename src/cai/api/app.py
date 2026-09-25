@@ -404,6 +404,43 @@ def create_cai_api_app(
         except Exception:
             pass
 
+        # (Mở rộng) Gộp thêm kho model LiteLLM + model Ollama local của người dùng.
+        # Tắt bằng CAI_API_MODELS_EXTENDED=false nếu muốn chỉ danh sách tuyển chọn.
+        if os.getenv("CAI_API_MODELS_EXTENDED", "true").lower() not in ("0", "false", "no"):
+            # 1) Kho model LiteLLM (hàng trăm model, mọi provider) — chỉ lấy model chat/completion
+            try:
+                import litellm as _ll
+                for _mname, _info in getattr(_ll, "model_cost", {}).items():
+                    if not _mname or _mname == "sample_spec":
+                        continue
+                    _mode = (_info or {}).get("mode")
+                    if _mode and _mode not in ("chat", "completion", "responses"):
+                        continue  # bỏ embedding/tts/image/rerank...
+                    entry = models_by_name.setdefault(_mname, {"name": _mname})
+                    if not entry.get("provider"):
+                        entry["provider"] = (_info or {}).get("litellm_provider")
+                    if not entry.get("category"):
+                        entry["category"] = _mode
+            except Exception:
+                pass
+            # 2) Model Ollama local (những model đã pull trên máy)
+            try:
+                import urllib.request as _ur
+                _base = (os.getenv("OLLAMA_API_BASE") or os.getenv("OLLAMA_HOST")
+                         or "http://127.0.0.1:11434").rstrip("/")
+                with _ur.urlopen(_base + "/api/tags", timeout=3) as _resp:
+                    _tags = _json.loads(_resp.read().decode("utf-8"))
+                for _m in _tags.get("models", []) or []:
+                    _nm = _m.get("name") or _m.get("model")
+                    if not _nm:
+                        continue
+                    for _pref in ("ollama_chat/", "ollama/"):
+                        _e = models_by_name.setdefault(_pref + _nm, {"name": _pref + _nm})
+                        _e.setdefault("provider", "Ollama (local)")
+                        _e.setdefault("category", "local")
+            except Exception:
+                pass
+
         # Normalize to Pydantic model
         result_models = []
         for m in models_by_name.values():
