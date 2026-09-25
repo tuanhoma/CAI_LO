@@ -105,14 +105,14 @@
   .log {
     font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
     background: #070a0f; border: 1px solid var(--border); border-radius: 10px;
-    padding: 12px 14px; height: 46vh; min-height: 260px; overflow-y: auto;
+    padding: 12px 14px; height: 50vh; min-height: 300px; overflow-y: auto;
     white-space: pre-wrap; word-break: break-word;
   }
-  .log .ln { display: flex; gap: 10px; }
-  .log .ts { color: #4a586b; flex: none; }
-  .log .msg { flex: 1; color: var(--text); }
+  .log .ln { display: flex; gap: 10px; margin-bottom: 6px; }
+  .log .ts { color: #4a586b; flex: none; align-self: flex-start; line-height: 1.6; user-select: none; font-size: 11.5px; }
+  .log .msg { flex: 1; min-width: 0; color: var(--text); line-height: 1.6; }
   .log .ln.tool .msg { color: #cdd7e3; }
-  .log .ln.tool .msg .arrow { color: var(--blue); }
+  .log .ln.tool .msg .arrow { color: var(--blue); font-weight: 700; }
   .log .ln.finding .msg { color: var(--text); }
   .log .ln.high .msg { color: var(--red); }
   .log .ln.med  .msg { color: var(--amber); }
@@ -121,6 +121,30 @@
   .log .ln.sys .msg { color: var(--muted); }
   .log .ln.err .msg { color: var(--red); font-weight: 600; }
   .tag { font-weight: 700; }
+  .tool-out-details { margin: 4px 0; border: 1px solid #1a2333; border-radius: 6px; background: rgba(13, 18, 26, 0.7); }
+  .tool-out-summary {
+    cursor: pointer; color: #94a3b8; font-size: 11.5px; user-select: none;
+    padding: 5px 9px; border-radius: 4px; display: flex; align-items: center; gap: 6px;
+    background: rgba(255,255,255,0.02);
+  }
+  .tool-out-summary:hover { color: #e2e8f0; background: rgba(255,255,255,0.06); }
+  .pre-block {
+    background: #090d14; border-top: 1px solid #1a2333; border-radius: 0 0 6px 6px;
+    padding: 10px 12px; margin: 0; overflow-x: auto; white-space: pre-wrap;
+    word-break: break-all; font-family: var(--mono); color: #cbd5e1; font-size: 12px;
+    line-height: 1.5; max-height: 420px; overflow-y: auto;
+  }
+  .agent-msg { white-space: pre-wrap; word-break: break-word; line-height: 1.6; }
+  .final-report {
+    background: rgba(61, 220, 132, 0.05); border: 1px solid rgba(61, 220, 132, 0.35);
+    border-radius: 8px; padding: 12px 14px; margin-top: 6px;
+  }
+  .final-title { color: var(--accent); font-weight: 700; margin-bottom: 6px; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .final-content {
+    white-space: pre-wrap; word-break: break-word; font-family: var(--mono);
+    color: #e6edf3; font-size: 12.5px; line-height: 1.6; margin: 0; max-height: 500px;
+    overflow-y: auto;
+  }
   .scroll-btn {
     position: absolute; right: 12px; bottom: 12px; width: 34px; height: 34px; border-radius: 50%;
     background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
@@ -233,7 +257,10 @@
     <div class="panel">
       <div class="log-hdr">
         <h3>Log agent</h3>
-        <span class="log-count" id="log-count">0 dòng</span>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="ghost" id="btn-copy-log" style="padding:3px 8px; font-size:11.5px; border-radius:6px; cursor:pointer;" title="Sao chép toàn bộ log">📋 Sao chép log</button>
+          <span class="log-count" id="log-count">0 sự kiện</span>
+        </div>
       </div>
       <div class="log-wrap">
         <div class="log" id="log"></div>
@@ -349,8 +376,12 @@ function addLog(kind, html, sevLevel) {
   ln.innerHTML = `<span class="ts">${nowTs()}</span><span class="msg">${html}</span>`;
   logEl.appendChild(ln);
   state.logLines++;
-  $("log-count").textContent = state.logLines + " dòng";
-  if (state.autoscroll) logEl.scrollTop = logEl.scrollHeight;
+  $("log-count").textContent = state.logLines + " sự kiện";
+  if (state.autoscroll) {
+    requestAnimationFrame(() => {
+      logEl.scrollTop = logEl.scrollHeight;
+    });
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -405,39 +436,76 @@ function handleStep(step) {
   } else if (t === "tool_call") {
     let args = step.arguments;
     try { if (typeof args === "string") args = JSON.parse(args); } catch (_) {}
-    const argStr = args && typeof args === "object"
-      ? Object.values(args).map((v) => truncate(v, 60)).join(" ")
-      : truncate(step.arguments || "", 80);
-    // QW3: nâng phase theo TÊN TOOL (trường có cấu trúc), không quét args
+    let argStr = "";
+    if (args && typeof args === "object") {
+      argStr = Object.entries(args)
+        .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : v}`)
+        .join(" ");
+    } else {
+      argStr = String(step.arguments || "");
+    }
     bumpPhase(step.tool || "");
-    addLog("tool", `<span class="arrow">${escapeHtml(step.tool||"tool")}</span> ${escapeHtml(argStr)}`);
+    addLog("tool", `<span class="arrow">${escapeHtml(step.tool||"tool")}</span> <span style="color:#94a3b8">${escapeHtml(argStr)}</span>`);
     $("status-text").textContent = truncate(`${step.tool || "tool"} ${argStr}`, 90);
   } else if (t === "tool_output") {
-    const out = truncate(step.output || "", 400);
-    // QW3: KHÔNG nâng phase theo text output (nguồn nhảy phase ảo); chỉ đếm severity
-    const level = countSeverity(out);
+    const rawOut = step.output != null ? String(step.output) : "";
+    const level = countSeverity(rawOut);
     const kind = level ? "finding" : "sys";
     const tag = level === "high" ? ` <span class="tag">[CAO]</span>` : level === "med" ? ` <span class="tag">[TB]</span>` : "";
-    addLog(kind, escapeHtml(truncate(out.replace(/\s+/g, " "), 220)) + tag, level);
+    
+    // Nếu output ngắn (<= 120 ký tự và không có ký tự xuống dòng)
+    if (rawOut.length <= 120 && !rawOut.includes("\n")) {
+      addLog(kind, escapeHtml(rawOut) + tag, level);
+    } else {
+      // Output đầy đủ của lệnh tool (sqlmap, nmap, ffuf, command shell...)
+      const lines = rawOut.split("\n").length;
+      const html = `
+        <details class="tool-out-details" open>
+          <summary class="tool-out-summary"><span class="arrow">↳</span> Kết quả lệnh (${lines} dòng, ${rawOut.length} ký tự)${tag}</summary>
+          <pre class="pre-block">${escapeHtml(rawOut)}</pre>
+        </details>`;
+      addLog(kind, html, level);
+    }
   } else if (t === "message") {
-    const txt = (step.text || "").replace(/\s+/g, " ").trim();
+    const txt = (step.text || "").trim();
     if (!txt) return;
-    bumpPhase(txt); // message là lời tường thuật của agent — cho phép làm fallback
+    bumpPhase(txt);
     const level = countSeverity(txt);
     const tag = level === "high" ? ` <span class="tag">[CAO]</span>` : level === "med" ? ` <span class="tag">[TB]</span>` : "";
-    $("status-text").textContent = truncate(txt, 90);
-    addLog(level ? "finding" : "agent", escapeHtml(truncate(txt, 240)) + tag, level);
+    $("status-text").textContent = truncate(txt.replace(/\s+/g, " "), 90);
+    
+    // Giữ nguyên định dạng và các dòng của agent narrative
+    const html = `<div class="agent-msg">${escapeHtml(txt)}</div>` + tag;
+    addLog(level ? "finding" : "agent", html, level);
   } else if (step && step.raw != null) {
     addLog("sys", "· khung SSE không đọc được");   // QW5: không render "undefined"
   } else if (t) {
     addLog("sys", escapeHtml(String(t)));
   }
-  // else: khung rỗng/không rõ — bỏ qua
 }
 
 function handleFinal(data) {
   state.maxPhase = PHASES.length - 1; // report done
-  addLog("sys", `<b>Hoàn tất.</b> ${escapeHtml(truncate((data && data.final_message) || "", 160))}`);
+  const finalMsg = (data && data.final_message) || "";
+  const finalOut = data && data.final_output;
+  let reportBody = "";
+  if (finalMsg) {
+    reportBody = `<pre class="final-content">${escapeHtml(finalMsg)}</pre>`;
+  } else if (finalOut) {
+    const str = typeof finalOut === "string" ? finalOut : JSON.stringify(finalOut, null, 2);
+    reportBody = `<pre class="final-content">${escapeHtml(str)}</pre>`;
+  }
+
+  if (reportBody) {
+    const reportHtml = `
+      <div class="final-report">
+        <div class="final-title"><span>✓</span> <b>Báo cáo kết quả hoàn tất:</b></div>
+        ${reportBody}
+      </div>`;
+    addLog("agent", reportHtml, "high");
+  } else {
+    addLog("sys", `<b>Hoàn tất.</b>`);
+  }
   markEnded(); // QW1: giải phóng UI ngay khi có 'final', không chờ socket đóng
 }
 
@@ -597,6 +665,17 @@ function clearLog() {
 $("btn-start").addEventListener("click", start);
 $("btn-stop").addEventListener("click", stop);
 $("btn-clear").addEventListener("click", clearLog);
+$("btn-copy-log").addEventListener("click", async () => {
+  try {
+    const text = logEl.innerText;
+    await navigator.clipboard.writeText(text);
+    const orig = $("btn-copy-log").textContent;
+    $("btn-copy-log").textContent = "✓ Đã chép!";
+    setTimeout(() => { $("btn-copy-log").textContent = orig; }, 1800);
+  } catch (err) {
+    alert("Không thể chép vào clipboard: " + err.message);
+  }
+});
 $("scroll-btn").addEventListener("click", () => { state.autoscroll = true; logEl.scrollTop = logEl.scrollHeight; });
 logEl.addEventListener("scroll", () => {
   const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
