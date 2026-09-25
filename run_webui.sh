@@ -4,11 +4,14 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# 1. Tu dong nap .env tu cai/.env hoac ../.env neu co
+# 1. Tu dong nap .env tu cai/.env hoac ../.env neu co.
+#    Bo ky tu CR (CRLF cua Windows) truoc khi source de tranh loi
+#    "$'\r': command not found" lam chet script duoi 'set -e'.
+_load_env() { [ -f "$1" ] && { set -a; . <(sed 's/\r$//' "$1"); set +a; }; }
 if [ -f ".env" ]; then
-    set -a; source ".env"; set +a
+    _load_env ".env"
 elif [ -f "../.env" ]; then
-    set -a; source "../.env"; set +a
+    _load_env "../.env"
 fi
 
 export CAI_API_HOST="${CAI_API_HOST:-127.0.0.1}"
