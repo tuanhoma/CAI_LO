@@ -1053,7 +1053,14 @@ def create_cai_api_app(
                 @app.get("/ui", include_in_schema=False)
                 @app.get("/ui/", include_in_schema=False)
                 def _serve_ui() -> FileResponse:  # noqa: D401
-                    return FileResponse(str(index_file))
+                    return FileResponse(
+                        str(index_file),
+                        headers={
+                            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+                            "Pragma": "no-cache",
+                            "Expires": "0",
+                        },
+                    )
 
                 @app.get("/", include_in_schema=False)
                 def _root_redirect() -> RedirectResponse:  # noqa: D401
