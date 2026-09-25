@@ -12,7 +12,10 @@ import threading
 import os
 
 _CAI_DEBUG_DIR = os.path.join(os.path.expanduser("~"), ".cai", "debug")
-import pty
+try:
+    import pty
+except ImportError:
+    pty = None
 import signal
 import time
 import uuid
@@ -106,10 +109,11 @@ class ShellSession:  # pylint: disable=too-many-instance-attributes
                     "sh", "-c",
                     self.command,
                 ]
+                preexec = getattr(os, "setsid", None)
                 self.process = subprocess.Popen(
                     docker_cmd_list,
                     stdin=self.slave, stdout=self.slave, stderr=self.slave,
-                    preexec_fn=os.setsid, universal_newlines=True,
+                    preexec_fn=preexec, universal_newlines=True,
                 )
                 self.is_running = True
                 with self._buffer_lock:
@@ -147,12 +151,21 @@ class ShellSession:  # pylint: disable=too-many-instance-attributes
 
         # --- Start Locally (Host) ---
         try:
-            self.master, self.slave = pty.openpty()
-            self.process = subprocess.Popen(  # pylint: disable=subprocess-popen-preexec-fn, consider-using-with # noqa: E501
-                self.command, shell=True,  # nosec B602
-                stdin=self.slave, stdout=self.slave, stderr=self.slave,
-                cwd=self.workspace_dir, preexec_fn=os.setsid, universal_newlines=True,
-            )
+            preexec = getattr(os, "setsid", None)
+            if pty is not None:
+                self.master, self.slave = pty.openpty()
+                self.process = subprocess.Popen(  # pylint: disable=subprocess-popen-preexec-fn, consider-using-with # noqa: E501
+                    self.command, shell=True,  # nosec B602
+                    stdin=self.slave, stdout=self.slave, stderr=self.slave,
+                    cwd=self.workspace_dir, preexec_fn=preexec, universal_newlines=True,
+                )
+            else:
+                self.master, self.slave = None, None
+                self.process = subprocess.Popen(
+                    self.command, shell=True,
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    cwd=self.workspace_dir, universal_newlines=True,
+                )
             self.is_running = True
             with self._buffer_lock:
                 self.output_buffer.append(f"[Session {self.session_id}] Started: {self.command}")
