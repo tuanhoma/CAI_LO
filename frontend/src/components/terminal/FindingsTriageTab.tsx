@@ -189,3 +189,4 @@ export const FindingsTriageTab: React.FC = () => {
     </div>
   );
 };
+

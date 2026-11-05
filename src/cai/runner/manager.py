@@ -87,7 +87,7 @@ class RunnerManager:
         self._tasks: Dict[str, RunnerTask] = {}
         self._terminal_events: List[Dict[str, Any]] = []
         self._terminal_seq: int = 0
-        self._state_lock = threading.Lock()
+        self._state_lock = threading.RLock()
         # Shared secret token
         env_token = os.getenv("CAI_RUNNER_TOKEN", "").strip()
         if not env_token:
@@ -187,9 +187,7 @@ class RunnerManager:
                         controller_ips.append(ip)
             except Exception:
                 pass
-            # Prefer 192.168.x.x (VMnet / LAN) first
-            controller_ips.sort(key=lambda x: (0 if x.startswith("192.168.") else 1, x))
-            preferred_ip = controller_ips[0] if controller_ips else "127.0.0.1"
+            preferred_ip = self.get_preferred_ip()
 
             return {
                 "active": len(runners_info) > 0,
@@ -313,6 +311,30 @@ class RunnerManager:
 
         return True
 
+    def get_preferred_ip(self) -> str:
+        """Get best host IP for Kali VM connection."""
+        try:
+            import socket
+            ips = [ip for ip in socket.gethostbyname_ex(socket.gethostname())[2] if not ip.startswith("127.")]
+            with self._state_lock:
+                for r in self._runners.values():
+                    if r.client_ip and r.client_ip != "127.0.0.1":
+                        if r.client_ip in ips:
+                            return r.client_ip
+                        prefix = ".".join(r.client_ip.split(".")[:3]) + "."
+                        for ip in ips:
+                            if ip.startswith(prefix):
+                                return ip
+            vm_ips = [ip for ip in ips if ip.startswith("192.168.106.") or ip.startswith("192.168.95.")]
+            if vm_ips:
+                return vm_ips[0]
+            lan_ips = [ip for ip in ips if ip.startswith("192.168.")]
+            if lan_ips:
+                return lan_ips[0]
+            return ips[0] if ips else "127.0.0.1"
+        except Exception:
+            return "127.0.0.1"
+
     # ------------------------------------------------------------------
     # Dispatch execution (used by CAI executor)
     # ------------------------------------------------------------------
@@ -333,6 +355,18 @@ class RunnerManager:
                 "duration": 0.0,
                 "error": "No runner connected",
             }
+
+        # Smart localhost routing: If command targets 127.0.0.1 or localhost,
+        # rewrite to Windows host IP reachable by Kali VM
+        pref_host = self.get_preferred_ip()
+        if pref_host and pref_host != "127.0.0.1":
+            import re
+            rewritten = re.sub(r'https?://(?:127\.0\.0\.1|localhost)(:\d+)?', rf'http://{pref_host}\g<1>', command)
+            if rewritten == command:
+                rewritten = re.sub(r'\b(?:127\.0\.0\.1|localhost)(:\d+)?\b', rf'{pref_host}\g<1>', command)
+            if rewritten != command:
+                logger.info(f"[RunnerManager] Auto-routing localhost to Windows host {pref_host}: {command} -> {rewritten}")
+                command = rewritten
 
         task_id = str(uuid.uuid4())[:12]
         task = RunnerTask(

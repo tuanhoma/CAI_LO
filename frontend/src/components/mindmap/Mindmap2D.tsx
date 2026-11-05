@@ -240,3 +240,4 @@ export const Mindmap2D: React.FC = () => {
     </div>
   );
 };
+

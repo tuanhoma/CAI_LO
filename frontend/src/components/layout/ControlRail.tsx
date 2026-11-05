@@ -86,9 +86,32 @@ export const ControlRail: React.FC = () => {
           type="text"
           value={target}
           onChange={(e) => setTarget(e.target.value)}
-          placeholder="vd: http://192.168.95.1:24001/basic/level2.php"
+          placeholder="vd: http://192.168.106.1:8888 hoặc http://192.168.95.1:24001"
           className="w-full bg-cyber-panel2 border border-cyber-border rounded-lg px-3 py-2 text-xs font-mono text-cyber-text focus:outline-none focus:border-cyber-cyan transition-all"
         />
+        {/* Smart localhost warning for Kali VM */}
+        {runnerStatus?.active && (target.includes("127.0.0.1") || target.includes("localhost")) && (
+          <div className="p-2 rounded bg-amber-500/10 border border-amber-500/30 text-[11px] font-mono text-amber-300 space-y-1">
+            <div className="flex items-center gap-1 font-semibold">
+              <span>⚠️ 127.0.0.1 là IP nội bộ máy ảo Kali.</span>
+            </div>
+            <p className="text-[10px] text-cyber-muted leading-tight">
+              Nếu Web/Lab dựng trên máy Windows thật, Kali không thể nối vào 127.0.0.1 của nó. Hãy đổi sang IP card mạng máy host ({runnerStatus.preferred_ip || "192.168.106.1"}).
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                const hostIp = runnerStatus.preferred_ip || "192.168.106.1";
+                const newTgt = target.replace("127.0.0.1", hostIp).replace("localhost", hostIp);
+                setTarget(newTgt);
+                setPrompt(prompt.replace(/127\.0\.0\.1/g, hostIp).replace(/localhost/g, hostIp));
+              }}
+              className="mt-1 px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 text-[10px] font-bold flex items-center gap-1 transition-all"
+            >
+              ⚡ Đổi sang IP Host: {runnerStatus.preferred_ip || "192.168.106.1"}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 2. Mission Prompt */}
