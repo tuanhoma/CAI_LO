@@ -14,7 +14,11 @@ export const DockedWorkspace: React.FC<{ isStandalone?: boolean }> = ({ isStanda
   return (
     <div
       className={`bg-cyber-panel flex flex-col font-mono transition-all duration-200 ${
-        isStandalone ? "flex-1 h-full min-h-0 border-t-0" : isExpanded ? "h-[500px] border-t border-cyber-border" : "h-72 border-t border-cyber-border"
+        isStandalone
+          ? "flex-1 h-full min-h-0 border-t-0"
+          : isExpanded
+          ? "h-[75vh] min-h-[480px] border-t-2 border-cyber-neon/40 shadow-neon"
+          : "h-72 border-t border-cyber-border"
       }`}
     >
       {/* Docked Navigation Tabs */}

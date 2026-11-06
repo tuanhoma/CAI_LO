@@ -220,31 +220,78 @@ export const ControlRail: React.FC = () => {
       </div>
 
       {/* 4. Budget & Autonomy Switch */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1">
-          <label className="text-[11px] text-cyber-muted font-mono">Ngân sách lượt</label>
-          <input
-            type="number"
-            min={1}
-            max={100}
-            value={maxTurns}
-            onChange={(e) => setMaxTurns(parseInt(e.target.value) || 30)}
-            className="w-full bg-cyber-panel2 border border-cyber-border rounded-lg px-2.5 py-1.5 text-xs font-mono text-cyber-text focus:outline-none focus:border-cyber-cyan"
-          />
+      <div className="space-y-2">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] text-cyber-muted font-mono">Ngân sách lượt</label>
+              {maxTurns >= 150 && (
+                <span className="text-[10px] text-cyber-neon font-mono font-bold">∞ Tự dừng</span>
+              )}
+            </div>
+            <input
+              type="number"
+              min={1}
+              max={300}
+              value={maxTurns}
+              onChange={(e) => setMaxTurns(parseInt(e.target.value) || 30)}
+              className="w-full bg-cyber-panel2 border border-cyber-border rounded-lg px-2.5 py-1.5 text-xs font-mono text-cyber-text focus:outline-none focus:border-cyber-cyan"
+            />
+          </div>
+
+          <div className="flex items-center justify-between p-2 rounded-lg bg-cyber-panel2/80 border border-cyber-border self-end h-[34px]">
+            <div className="flex items-center gap-1.5">
+              <Zap className="w-3.5 h-3.5 text-cyber-neon" />
+              <span className="text-[11px] font-medium text-cyber-text">HackerAI Loop</span>
+            </div>
+            <input
+              type="checkbox"
+              checked={isAutonomy}
+              onChange={(e) => setIsAutonomy(e.target.checked)}
+              className="w-4 h-4 accent-cyber-neon cursor-pointer"
+            />
+          </div>
         </div>
 
-        <div className="flex items-center justify-between p-2 rounded-lg bg-cyber-panel2/80 border border-cyber-border self-end h-[34px]">
-          <div className="flex items-center gap-1.5">
-            <Zap className="w-3.5 h-3.5 text-cyber-neon" />
-            <span className="text-[11px] font-medium text-cyber-text">HackerAI Loop</span>
-          </div>
-          <input
-            type="checkbox"
-            checked={isAutonomy}
-            onChange={(e) => setIsAutonomy(e.target.checked)}
-            className="w-4 h-4 accent-cyber-neon cursor-pointer"
-          />
+        {/* Quick turn presets */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] text-cyber-muted font-mono">Mốc nhanh:</span>
+          {[30, 60, 100].map((turns) => (
+            <button
+              key={turns}
+              type="button"
+              onClick={() => setMaxTurns(turns)}
+              className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-all ${
+                maxTurns === turns
+                  ? "bg-cyber-cyan/20 border-cyber-cyan text-cyber-cyan font-bold"
+                  : "bg-cyber-panel border-cyber-border text-cyber-muted hover:text-cyber-text"
+              }`}
+            >
+              {turns}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => {
+              setMaxTurns(200);
+              setIsAutonomy(true);
+            }}
+            className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-all flex items-center gap-1 ${
+              maxTurns >= 150
+                ? "bg-cyber-neon/20 border-cyber-neon text-cyber-neon font-bold shadow-neon"
+                : "bg-cyber-panel border-cyber-border text-cyber-neon/80 hover:text-cyber-neon hover:border-cyber-neon/40"
+            }`}
+            title="Chạy đến khi thu thập được cờ hoặc hoàn thành mục tiêu thì tự dừng"
+          >
+            <span>∞ Tự dừng khi ra cờ</span>
+          </button>
         </div>
+
+        {isAutonomy && (
+          <p className="text-[10px] font-mono text-cyber-muted/80 leading-tight">
+            💡 <b className="text-cyber-neon">HackerAI Loop</b> sẽ tự động bắt cờ (Flag) và kết thúc chiến dịch ngay khi khai thác thành công.
+          </p>
+        )}
       </div>
 
       {/* 5. Main Action Buttons */}

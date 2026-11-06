@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { Terminal as TermIcon, Trash2, Send } from "lucide-react";
+import { Terminal as TermIcon, Trash2, Send, ArrowDown } from "lucide-react";
 import { useCampaignStore } from "../../stores/useCampaignStore";
 
 export const LiveTerminal: React.FC = () => {
@@ -14,7 +14,7 @@ export const LiveTerminal: React.FC = () => {
   const [isExecuting, setIsExecuting] = useState(false);
   const [cmdHistory, setCmdHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
-  const { target, runnerStatus, fetchGraph, fetchMemorySummary } = useCampaignStore();
+  const { target, runnerStatus, fetchGraph, fetchMemorySummary, activeDockTab } = useCampaignStore();
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -52,7 +52,11 @@ export const LiveTerminal: React.FC = () => {
     xtermInstance.current = term;
     fitAddonRef.current = fitAddon;
 
-    const handleResize = () => fitAddon.fit();
+    const handleResize = () => {
+      try {
+        fitAddon.fit();
+      } catch (_) {}
+    };
     window.addEventListener("resize", handleResize);
 
     return () => {
@@ -60,6 +64,19 @@ export const LiveTerminal: React.FC = () => {
       term.dispose();
     };
   }, []);
+
+  // Re-fit and scroll to bottom when terminal tab becomes active
+  useEffect(() => {
+    if (activeDockTab === "terminal" && xtermInstance.current && fitAddonRef.current) {
+      const timer = setTimeout(() => {
+        try {
+          fitAddonRef.current?.fit();
+          xtermInstance.current?.scrollToBottom();
+        } catch (_) {}
+      }, 60);
+      return () => clearTimeout(timer);
+    }
+  }, [activeDockTab]);
 
   // Poll logs from backend
   useEffect(() => {
@@ -75,7 +92,6 @@ export const LiveTerminal: React.FC = () => {
 
         if (xtermInstance.current && events.length > 0) {
           events.forEach((ev: any) => {
-            if (ev.seq > lastSeqRef.current) lastSeqRef.current = ev.seq;
             if (ev.kind === "command") {
               const tag = ev.source === "manual" ? "\x1b[1;32m[MANUAL]\x1b[0m" : "\x1b[1;36m[AGENT]\x1b[0m";
               xtermInstance.current?.writeln(`\r\n${tag} \x1b[1;37m$ ${ev.text}\x1b[0m`);
@@ -83,6 +99,8 @@ export const LiveTerminal: React.FC = () => {
               xtermInstance.current?.write(ev.text);
             }
           });
+          // Auto-scroll to bottom so user always sees the latest logs & results
+          xtermInstance.current?.scrollToBottom();
         }
       } catch (_) {}
     };
@@ -165,13 +183,22 @@ export const LiveTerminal: React.FC = () => {
         </div>
 
         {/* Tools */}
-        <button
-          onClick={clearTerminal}
-          className="p-1 rounded text-cyber-muted hover:text-cyber-red transition-all"
-          title="Xóa màn hình terminal"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => xtermInstance.current?.scrollToBottom()}
+            className="p-1 rounded text-cyber-muted hover:text-cyber-neon transition-all"
+            title="Cuộn xuống dưới cùng"
+          >
+            <ArrowDown className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={clearTerminal}
+            className="p-1 rounded text-cyber-muted hover:text-cyber-red transition-all"
+            title="Xóa màn hình terminal"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Terminal Canvas */}
