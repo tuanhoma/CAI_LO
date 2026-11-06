@@ -17,8 +17,9 @@ export const TriageDeck: React.FC = () => {
   };
 
   return (
-    <div className="w-80 md:w-96 border-l border-cyber-border bg-cyber-panel/60 backdrop-blur-md flex flex-col h-[calc(100vh-3.5rem)] overflow-y-auto p-4 space-y-4">
-      {/* 3D Inspector HUD Card (when a node is clicked in 3D) */}
+    <aside className="w-80 md:w-96 shrink-0 h-full min-h-0 border-l border-cyber-border bg-cyber-panel/60 backdrop-blur-md flex flex-col overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 pb-28 space-y-4">
+        {/* 3D Inspector HUD Card (when a node is clicked in 3D) */}
       {selectedNode && (
         <div className="p-3.5 rounded-xl bg-cyber-panel2 border border-cyber-cyan/40 shadow-cyan space-y-2 animate-fadeIn">
           <div className="flex items-center justify-between">
@@ -157,6 +158,7 @@ export const TriageDeck: React.FC = () => {
         </div>
       </div>
     </div>
-  );
+  </aside>
+);
 };
 

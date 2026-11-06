@@ -70,8 +70,9 @@ export const ControlRail: React.FC = () => {
   ];
 
   return (
-    <div className="w-80 md:w-96 border-r border-cyber-border bg-cyber-panel/60 backdrop-blur-md flex flex-col h-[calc(100vh-3.5rem)] overflow-y-auto p-4 space-y-4">
-      {/* 1. Scope & Target */}
+    <aside className="w-80 md:w-96 shrink-0 h-full min-h-0 border-r border-cyber-border bg-cyber-panel/60 backdrop-blur-md flex flex-col overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 pb-28 space-y-4">
+        {/* 1. Scope & Target */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
           <label className="text-xs font-semibold text-cyber-text flex items-center gap-1.5">
@@ -529,5 +530,6 @@ export const ControlRail: React.FC = () => {
         )}
       </div>
     </div>
-  );
+  </aside>
+);
 };

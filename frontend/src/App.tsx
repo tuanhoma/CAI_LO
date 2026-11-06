@@ -36,7 +36,7 @@ export const App: React.FC = () => {
       <Navbar />
 
       {/* Main Workspace Layout */}
-      <div className="flex-1 flex overflow-hidden relative">
+      <div className="flex-1 flex overflow-hidden relative min-h-0">
         {/* Left: Mission Control Rail */}
         <ControlRail />
 
