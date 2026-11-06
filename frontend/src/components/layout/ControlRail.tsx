@@ -60,12 +60,13 @@ export const ControlRail: React.FC = () => {
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
 
-  // Popular quick-pick models
+  // Popular quick-pick models (prioritizing high-quota models)
   const quickModels = [
     { label: "Gemini 3.5 Lite", val: "gemini/gemini-3.5-flash-lite" },
-    { label: "Gemini 2.5 Pro", val: "gemini/gemini-2.5-pro" },
+    { label: "⚡ Groq Llama 70B", val: "groq/llama-3.3-70b-versatile" },
+    { label: "🧠 DeepSeek V3", val: "deepseek/deepseek-chat" },
+    { label: "Gemini 3.1 Lite", val: "gemini/gemini-3.1-flash-lite" },
     { label: "GPT-4o", val: "openai/gpt-4o" },
-    { label: "Claude 3.5", val: "anthropic/claude-3-5-sonnet-20241022" },
     { label: "Ollama Local", val: "ollama/qwen2.5-coder:7b" },
   ];
 

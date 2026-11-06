@@ -329,6 +329,8 @@ async def sse_stream_via_hooks(starting_agent, input_items, *, context=None, max
                 break
 
             current_input.append({"role": "user", "content": next_prompt})
+            # Pacing delay between autonomy cycles to prevent HTTP 429 RateLimit on 15 RPM models
+            await asyncio.sleep(2.0)
 
         # Persist conversation history directly onto session
         if session is not None:
