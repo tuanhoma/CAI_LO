@@ -281,15 +281,15 @@ export const ControlRail: React.FC = () => {
                 ? "bg-cyber-neon/20 border-cyber-neon text-cyber-neon font-bold shadow-neon"
                 : "bg-cyber-panel border-cyber-border text-cyber-neon/80 hover:text-cyber-neon hover:border-cyber-neon/40"
             }`}
-            title="Chạy đến khi thu thập được cờ hoặc hoàn thành mục tiêu thì tự dừng"
+            title="Chạy tự động cho đến khi quét xong, khai thác PoC và lập báo cáo an ninh thì tự dừng"
           >
-            <span>∞ Tự dừng khi ra cờ</span>
+            <span>∞ Tự dừng khi đạt mục tiêu</span>
           </button>
         </div>
 
         {isAutonomy && (
           <p className="text-[10px] font-mono text-cyber-muted/80 leading-tight">
-            💡 <b className="text-cyber-neon">HackerAI Loop</b> sẽ tự động bắt cờ (Flag) và kết thúc chiến dịch ngay khi khai thác thành công.
+            💡 <b className="text-cyber-neon">HackerAI Loop</b> sẽ tự động rà soát, khai thác PoC và kết thúc phiên khi lập xong báo cáo đánh giá an ninh.
           </p>
         )}
       </div>
@@ -511,9 +511,9 @@ export const ControlRail: React.FC = () => {
         </div>
 
         <div className="text-xs font-mono text-cyber-muted flex items-center justify-between">
-          <span>Tiến độ cờ CTF:</span>
+          <span>Lỗ hổng đã xác thực (PoC):</span>
           <b className="text-cyber-neon">
-            {labStatus?.challenges_solved || 0}/{labStatus?.challenges_total || 7} cờ
+            {labStatus?.challenges_solved || 0}/{labStatus?.challenges_total || 7} mục
           </b>
         </div>
 

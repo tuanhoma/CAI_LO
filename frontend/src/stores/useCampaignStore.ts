@@ -202,7 +202,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     const hostIp = runnerStatus?.preferred_ip || (runnerStatus?.active ? "192.168.106.1" : "127.0.0.1");
     set({
       target: `http://${hostIp}:8888`,
-      prompt: `Khảo sát và đánh giá bảo mật toàn diện mục tiêu http://${hostIp}:8888. Tìm kiếm các lỗ hổng OWASP Top 10 (SQL Injection, CSRF, IDOR, Command Injection, Path Traversal, XSS), khai thác để chiếm các lá cờ (CTF Flags) và lập báo cáo tổng kết hoàn chỉnh.`,
+      prompt: `Khảo sát và đánh giá bảo mật toàn diện mục tiêu http://${hostIp}:8888. Rà quét và phát hiện các lỗ hổng OWASP Top 10 (SQL Injection, CSRF, IDOR, OS Command Injection, Path Traversal, XSS), thực hiện khai thác chứng minh lỗ hổng (PoC) và lập báo cáo tổng kết an ninh hệ thống hoàn chỉnh kèm khuyến nghị khắc phục.`,
     });
   },
 
