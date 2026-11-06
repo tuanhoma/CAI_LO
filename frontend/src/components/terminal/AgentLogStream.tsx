@@ -186,7 +186,7 @@ export const AgentLogStream: React.FC = () => {
                     </button>
                   </div>
                   <pre className="p-3 rounded bg-black/60 border border-cyber-border text-slate-200 text-xs font-mono whitespace-pre-wrap leading-relaxed max-h-96 overflow-y-auto select-text">
-                    {s.final_message}
+                    {s.final_message || "Chiến dịch đã hoàn tất. Xem chi tiết báo cáo trong tab 'Lịch sử các phiên'."}
                   </pre>
                 </div>
               );

@@ -7,6 +7,7 @@ that connect back to CAI via outbound WebSockets or HTTP long-polling.
 from __future__ import annotations
 
 import asyncio
+import collections
 import logging
 import os
 import secrets
@@ -87,6 +88,7 @@ class RunnerManager:
         self._tasks: Dict[str, RunnerTask] = {}
         self._terminal_events: List[Dict[str, Any]] = []
         self._terminal_seq: int = 0
+        self._agent_recent_commands: collections.deque[str] = collections.deque(maxlen=10)
         self._state_lock = threading.RLock()
         # Shared secret token
         env_token = os.getenv("CAI_RUNNER_TOKEN", "").strip()
@@ -367,6 +369,33 @@ class RunnerManager:
             if rewritten != command:
                 logger.info(f"[RunnerManager] Auto-routing localhost to Windows host {pref_host}: {command} -> {rewritten}")
                 command = rewritten
+
+        if source == "agent":
+            norm_cmd = " ".join(command.strip().lower().split())
+            with self._state_lock:
+                repeat_count = self._agent_recent_commands.count(norm_cmd)
+                self._agent_recent_commands.append(norm_cmd)
+
+            if repeat_count >= 2:
+                logger.warning(f"[RunnerManager] Intercepting repetitive command for agent: {command[:80]}")
+                intercept_msg = (
+                    f"[SYSTEM GUARD - CHẶN LẶP LỆNH / LOOP INTERCEPTED]\n"
+                    f"Lệnh: `{command[:100]}` đã được thực thi 2 lần trước đó và đã có kết quả trong phiên!\n"
+                    f"Hệ thống tự động chặn việc chạy lại lệnh này để bảo toàn ngân sách lượt (turn budget).\n\n"
+                    f"HÃY CHUYỂN NGAY SANG CÁC BƯỚC KHAI THÁC MỤC TIÊU CỤ THỂ:\n"
+                    f"• SQL Injection: curl -s -X POST \"<target>/login\" -d \"username=admin'--&password=x\"\n"
+                    f"• Command Injection (RCE): curl -s -X POST \"<target>/tools/ping\" -d \"host=127.0.0.1;id\"\n"
+                    f"• File Traversal (LFI): curl -s \"<target>/view?file=flag.txt\" hoặc \"/view?file=../../../../etc/passwd\"\n"
+                    f"• IDOR / Data Leak: curl -s \"<target>/api/v1/invoices/999\"\n"
+                    f"• Xem thông tin ẩn: curl -s \"<target>/robots.txt\" hoặc \"/admin-portal/\"\n"
+                    f"Hãy chọn 1 mục tiêu ở trên và gọi công cụ thực thi ngay!"
+                )
+                self._append_terminal_event("output", intercept_msg, source=source, task_id="intercept")
+                return {
+                    "output": intercept_msg,
+                    "return_code": 1,
+                    "duration": 0.01,
+                }
 
         task_id = str(uuid.uuid4())[:12]
         task = RunnerTask(

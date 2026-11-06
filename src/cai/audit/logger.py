@@ -275,6 +275,15 @@ class AuditLogger:
         open_ports: List[Dict[str, str]] = []
         findings: List[Dict[str, str]] = []
 
+        if target and "://" in target:
+            try:
+                import urllib.parse
+                parsed = urllib.parse.urlparse(target)
+                port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                open_ports.append({"port": f"{port}/tcp", "service": f"{parsed.scheme.upper()} Web Service"})
+            except Exception:
+                pass
+
         port_re = re.compile(r"^(\d+/(?:tcp|udp))\s+(\w+)\s+([^\n]+)", re.MULTILINE)
         cve_re = re.compile(r"(CVE-\d{4}-\d+)", re.IGNORECASE)
 
@@ -380,6 +389,13 @@ class AuditLogger:
                 md.append(f"| `{ts}` | `{tool}` | `{cmd}...` | `{dur}` | {rc_str} |")
         else:
             md.append("*Chưa có lệnh nào được thực thi.*")
+
+        llm_messages = [e.get("message") for e in events if e.get("type") == "llm_turn" and e.get("message")]
+        long_messages = [m for m in llm_messages if len(str(m)) > 150]
+        if long_messages:
+            md.append("\n---\n")
+            md.append("## 5. Phân tích & Đánh giá chi tiết từ AI Pentester")
+            md.append(str(long_messages[-1]))
 
         md.append("\n---\n")
         md.append(f"*Báo cáo được khởi tạo tự động bởi CAI Autonomous Pentesting Framework lúc {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}.*")

@@ -112,6 +112,18 @@ class AutonomyController:
             self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+        # Pre-seed open ports if target specifies a URL with explicit or standard port
+        if self.state.target:
+            import urllib.parse
+            try:
+                parsed = urllib.parse.urlparse(self.state.target)
+                if parsed.scheme:
+                    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                    self.state.discovered_ports.add(f"{port}/tcp (http)")
+                    self._advance_phase_to("scan")
+            except Exception:
+                pass
+
     @staticmethod
     def is_actionable_pentest_intent(prompt: str, target: str = "") -> bool:
         """Determine if the user request requires multi-step autonomous execution."""
@@ -193,9 +205,24 @@ class AutonomyController:
             self.state.discovered_ports.add(f"{port_proto.lower()} ({svc_clean})")
             self._advance_phase_to("scan")
 
-        # 3. Extract URLs
+        # 3. Extract URLs and API/Web Endpoints
         for m in self._URL_RE.finditer(raw):
             self.state.discovered_urls.add(m.group(1)[:120])
+
+        # 3b. Extract OpenAPI/Swagger routes or API endpoints
+        if "openapi" in raw.lower() or '"paths":' in raw or '"/' in raw:
+            for m in re.finditer(r'"(/[a-zA-Z0-9_\-\./{}]+)":\s*\{', raw):
+                ep = m.group(1)
+                if not any(ep.endswith(ext) for ext in (".json", ".ico")):
+                    self.state.discovered_urls.add(ep)
+                    self._advance_phase_to("enum")
+
+        # 3c. Extract HTML links
+        for m in re.finditer(r'href=["\'](/[^"\'#\s>]+)["\']', raw):
+            href = m.group(1)
+            if not any(href.endswith(ext) for ext in (".css", ".js", ".png", ".jpg")):
+                self.state.discovered_urls.add(href)
+                self._advance_phase_to("enum")
 
         # 4. Extract CTF Flags
         for m in self._FLAG_RE.finditer(raw):
@@ -209,8 +236,21 @@ class AutonomyController:
             if finding_str not in self.state.discovered_findings:
                 self.state.discovered_findings.append(finding_str)
 
-        if re.search(r"\b(is vulnerable|sql injection|remote code execution|root:x:0:0:)\b", raw, re.I):
-            finding_str = f"Critical finding detected by {tool_name}"
+        # 5b. Exploit Confirmation patterns (SQLi, RCE, LFI, Admin Auth Bypass)
+        if re.search(r"\b(uid=\d+\([a-zA-Z0-9_-]+\)|root:x:0:0:|daemon:x:)\b", raw):
+            finding_str = f"RCE / Command Execution Confirmed (via {tool_name})"
+            if finding_str not in self.state.discovered_findings:
+                self.state.discovered_findings.append(finding_str)
+            self._advance_phase_to("post")
+
+        if re.search(r"(logged in as admin|Admin Secret Portal|FLAG CAPTURED|FLAG\{)", raw, re.I):
+            finding_str = f"Authentication Bypass / Flag Captured (via {tool_name})"
+            if finding_str not in self.state.discovered_findings:
+                self.state.discovered_findings.append(finding_str)
+            self._advance_phase_to("post")
+
+        if re.search(r"\b(is vulnerable|sql injection|remote code execution)\b", raw, re.I):
+            finding_str = f"Vulnerability detected by {tool_name}"
             if finding_str not in self.state.discovered_findings:
                 self.state.discovered_findings.append(finding_str)
             self._advance_phase_to("exploit")
@@ -342,6 +382,23 @@ class AutonomyController:
             )
             return False, None, cp
 
+        # Final warning cycle before budget exhaustion: trigger full report generation
+        if self.state.cycle == self.state.max_cycles - 1 or remaining_turns <= 5:
+            self._advance_phase_to("report")
+            reason = "Vòng cận cuối của ngân sách — Yêu cầu Agent tổng kết và viết Báo cáo An ninh hoàn chỉnh."
+            next_prompt = (
+                f"[AUTONOMY LOOP — BƯỚC CUỐI CÙNG: VIẾT BÁO CÁO TỔNG KẾT (Vòng {self.state.cycle + 1}/{self.state.max_cycles})]\n"
+                f"Ngân sách lượt kiểm thử sắp hoàn tất ({self.state.turns_used}/{self.state.max_turns} lượt).\n"
+                f"Hãy dừng các lệnh rà soát lan man và viết một BÁO CÁO ĐÁNH GIÁ AN NINH HỆ THỐNG đầy đủ và chi tiết gồm:\n"
+                f"1. Tóm tắt điều hành (Executive Summary) cho mục tiêu `{self.state.target}`\n"
+                f"2. Danh sách dịch vụ và các endpoint đã khảo sát\n"
+                f"3. Chi tiết các lỗ hổng phát hiện được (SQLi, IDOR, LFI, RCE...) kèm mã chứng minh (PoC)\n"
+                f"4. Đánh giá mức độ rủi ro và khuyến nghị khắc phục cụ thể\n"
+                f"Kết thúc báo cáo với nhãn `[ASSESSMENT_COMPLETE]`."
+            )
+            cp = self.save_checkpoint(reason)
+            return True, next_prompt, cp
+
         # 6. REFLECT & REPLAN: Determine tactical continuation prompt
         state_summary = self._build_state_summary(remaining_turns)
 
@@ -427,15 +484,22 @@ class AutonomyController:
         findings_str = "; ".join(self.state.discovered_findings[:5]) if self.state.discovered_findings else "Chưa có"
         recent_cmds = [c.split(":", 1)[-1][:60] for c in self.state.command_history[-4:]]
         cmds_str = " | ".join(recent_cmds) if recent_cmds else "Chưa chạy lệnh nào"
+        routes_list = sorted([u for u in self.state.discovered_urls if u.startswith("/") or "://" in u])[:8]
+        routes_str = ", ".join(routes_list) if routes_list else "Chưa có"
         base = (
             f"📊 [TRẠNG THÁI CHIẾN DỊCH HIỆN TẠI]\n"
             f"- Mục tiêu (Scope): {self.state.target or 'Theo yêu cầu'}\n"
             f"- Pha hiện tại: {PHASE_LABELS_VI.get(self.state.current_phase, self.state.current_phase)}\n"
             f"- Ngân sách còn lại: {remaining_turns}/{self.state.max_turns} lượt công cụ\n"
             f"- Cổng/Dịch vụ mở đã biết: {ports_str}\n"
+            f"- Endpoints/Đường dẫn đã tìm thấy: {routes_str}\n"
             f"- Phát hiện/Cảnh báo: {findings_str}\n"
             f"- Lệnh vừa chạy (không lặp lại): {cmds_str}"
         )
+        if routes_list:
+            base += (
+                f"\n💡 [HƯỚNG TẤN CÔNG TIẾP THEO]: Chọn ngay 1 endpoint ở trên để gửi payload kiểm thử (ví dụ: POST /login với SQLi bypass, POST /tools/ping với Command Injection, GET /view?file=... với LFI, hoặc GET /api/v1/... với IDOR). Tuyệt đối không lặp lại lệnh curl lấy toàn bộ openapi.json hay trang chủ!"
+            )
         try:
             from cai.memory import campaign_memory
 

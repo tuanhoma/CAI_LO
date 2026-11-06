@@ -216,7 +216,8 @@ async def sse_stream_via_hooks(starting_agent, input_items, *, context=None, max
             initial_prompt = str(last_item.get("content") or "")
 
     total_max_turns = int(max_turns) if isinstance(max_turns, (int, float)) else 30
-    max_cycles = min(8, max(2, total_max_turns // 3))
+    # Allow cycles to scale with total_max_turns (5 turns per cycle)
+    max_cycles = max(10, (total_max_turns + 4) // 5)
 
     autonomy_state = AutonomyState(
         session_id=session_id or "default",
@@ -386,7 +387,16 @@ async def sse_stream_via_hooks(starting_agent, input_items, *, context=None, max
                 session.last_steps = steps
             except Exception:
                 pass
-        yield _sse("final", {"steps": steps, "final_message": last_message, "final_output": final_output})
+
+        # Fallback for final_message: if model didn't emit text message, synthesize report from audit logger
+        final_msg = last_message
+        if not final_msg or not str(final_msg).strip():
+            try:
+                final_msg = audit_logger.get_or_generate_report(session_id)
+            except Exception:
+                final_msg = "Chiến dịch kiểm thử an ninh đã hoàn tất."
+
+        yield _sse("final", {"steps": steps, "final_message": final_msg, "final_output": final_output})
 
 
 def _token_event_from_raw(raw_evt: Any) -> Dict[str, Any] | None:
