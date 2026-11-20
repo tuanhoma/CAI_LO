@@ -60,6 +60,12 @@ class AutonomyState:
     discovered_urls: Set[str] = field(default_factory=set)
     discovered_findings: List[str] = field(default_factory=list)
     captured_flags: Set[str] = field(default_factory=set)
+    # Multi-flag / exhaustive mode: keep hunting remaining vulns instead of
+    # stopping at the first captured flag. Inferred from the initial prompt
+    # (e.g. "all vulnerabilities", "every FLAG", "tất cả", "vét hết").
+    exhaustive_flags: bool = False
+    expected_flags: int = 0  # 0 = unknown; stop early once this many captured
+    last_progress_cycle: int = 0  # cycle index at which a NEW flag was last captured
     command_history: List[str] = field(default_factory=list)
     repeated_commands: int = 0
     failed_commands: int = 0
@@ -123,6 +129,28 @@ class AutonomyController:
                     self._advance_phase_to("scan")
             except Exception:
                 pass
+
+        # Infer exhaustive multi-flag intent from the initial prompt (unless the
+        # caller already set it explicitly on the state).
+        if not self.state.exhaustive_flags:
+            self.state.exhaustive_flags = self.detect_exhaustive_intent(
+                self.state.initial_prompt
+            )
+
+    # Signals the user wants EVERY flag / ALL vulnerabilities, not just the first.
+    _EXHAUSTIVE_RE = re.compile(
+        r"\b(all\s+(?:the\s+)?(?:flags?|vuln\w*|challenges?)|every\s+(?:flag|vuln\w*|challenge)"
+        r"|each\s+(?:flag|vuln\w*|challenge)|exhaustive|enumerate\s+and\s+exploit\s+all"
+        r"|tất\s*cả|toàn\s*bộ|mọi\s+(?:flag|lỗ\s*hổng)|vét\s*(?:hết|sạch)?|hết\s+(?:các\s+)?flag)\b",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def detect_exhaustive_intent(cls, prompt: str) -> bool:
+        """True if the prompt asks to capture ALL flags / exploit every vuln."""
+        if not prompt:
+            return False
+        return bool(cls._EXHAUSTIVE_RE.search(prompt))
 
     @staticmethod
     def is_actionable_pentest_intent(prompt: str, target: str = "") -> bool:
@@ -226,7 +254,11 @@ class AutonomyController:
 
         # 4. Extract CTF Flags
         for m in self._FLAG_RE.finditer(raw):
-            self.state.captured_flags.add(m.group(0))
+            flag = m.group(0)
+            if flag not in self.state.captured_flags:
+                self.state.captured_flags.add(flag)
+                # Record progress so exhaustive mode knows a NEW flag just landed.
+                self.state.last_progress_cycle = self.state.cycle
             self._advance_phase_to("post")
 
         # 5. Extract CVEs & high-confidence findings
@@ -322,9 +354,67 @@ class AutonomyController:
             cp = self.save_checkpoint("Truy vấn hội thoại thông thường — hoàn tất.")
             return False, None, cp
 
-        # 2. Check if CTF Flag was captured and reported
+        # 2. Check captured flags.
         if self.state.captured_flags:
             flags_str = ", ".join(sorted(self.state.captured_flags))
+            n = len(self.state.captured_flags)
+
+            if self.state.exhaustive_flags:
+                # EXHAUSTIVE MODE: keep hunting remaining vulnerabilities instead of
+                # stopping at the first flag. Stop only when (a) the known target
+                # count is reached, or (b) no NEW flag has appeared for 2+ cycles
+                # (stuck). Budget limits are enforced later in checks #5/#6.
+                reached_target = (
+                    self.state.expected_flags > 0 and n >= self.state.expected_flags
+                )
+                stale_cycles = self.state.cycle - self.state.last_progress_cycle
+                stuck = self.state.cycle >= 2 and stale_cycles >= 2
+
+                if reached_target or stuck:
+                    self._advance_phase_to("report")
+                    why = (
+                        f"Đã thu thập đủ {n}/{self.state.expected_flags} Flag"
+                        if reached_target
+                        else f"Không phát hiện Flag mới sau {stale_cycles} vòng (đã có {n})"
+                    )
+                    cp = self.save_checkpoint(f"{why} — Tổng kết. Flags: {flags_str}")
+                    return False, None, cp
+
+                # Otherwise push the agent toward the NEXT unsolved vulnerability.
+                self._advance_phase_to("exploit")
+                # De-dup nudge: list distinct commands already executed so the weak
+                # model stops re-running the same curl and moves to a NEW action.
+                _ran = []
+                for s in self.state.command_history:
+                    c = s.split(":", 1)[-1].strip()
+                    if c and c not in _ran:
+                        _ran.append(c)
+                _ran_block = ""
+                if _ran:
+                    _recent = "\n".join(f"   - {c[:120]}" for c in _ran[-8:])
+                    _ran_block = (
+                        f"\nĐÃ CHẠY RỒI (TUYỆT ĐỐI KHÔNG lặp lại các lệnh này):\n{_recent}\n"
+                        f"Hãy chọn một lệnh/endpoint KHÁC chưa thử.\n"
+                    )
+                prompt = (
+                    f"[AUTONOMY LOOP — ĐÃ LẤY {n} FLAG, TIẾP TỤC VÉT HẾT] Đã bắt được: {flags_str}.\n"
+                    f"{_ran_block}"
+                    f"CHƯA XONG — mục tiêu là khai thác TẤT CẢ lỗ hổng còn lại trên `{self.state.target}`. "
+                    f"KHÔNG viết báo cáo cuối và KHÔNG in [ASSESSMENT_COMPLETE] lúc này.\n"
+                    f"Hãy chuyển sang các lỗ hổng CHƯA khai thác (mỗi loại cho 1 flag riêng) và thực thi lệnh ngay:\n"
+                    f"- Recon đường ẩn: GET /robots.txt rồi truy cập path bị lộ (vd /admin-portal/).\n"
+                    f"- IDOR: GET /api/v1/invoices/999.\n"
+                    f"- LFI: GET /view?file=flag.txt (hoặc traversal ../).\n"
+                    f"- Command Injection: POST/GET /tools/ping với host=127.0.0.1;id.\n"
+                    f"- SQLi bypass: POST /login với username=admin'-- - (nếu thất bại đổi sang nháy kép \").\n"
+                    f"Bỏ qua các loại đã lấy được flag. Dùng curl qua generic_linux_command, trích FLAG{{...}} nguyên văn."
+                )
+                cp = self.save_checkpoint(
+                    f"Exhaustive: đã có {n} flag ({flags_str}) — tiếp tục vét lỗ hổng còn lại."
+                )
+                return True, prompt, cp
+
+            # SINGLE-FLAG (default CTF) MODE: original behavior — stop at first flag.
             if any(f in msg for f in self.state.captured_flags) or self.state.cycle >= 2:
                 self._advance_phase_to("report")
                 cp = self.save_checkpoint(f"Đã thu thập được Flag ({flags_str}) — Hoàn tất mục tiêu!")
@@ -337,6 +427,28 @@ class AutonomyController:
                     f"Hãy xác nhận bằng chứng và viết Báo cáo tổng kết cuối cùng kèm nhãn [ASSESSMENT_COMPLETE]."
                 )
                 cp = self.save_checkpoint(f"Phát hiện Flag ({flags_str}) — Yêu cầu Agent xuất báo cáo cuối.")
+                return True, prompt, cp
+
+        # Exhaustive mode: ignore the agent's own "done" signals (ASSESSMENT_COMPLETE
+        # / report structure) while budget remains and progress is not stuck — the
+        # stop decision belongs to check #2 (target reached or stale) and #5/#6 (budget).
+        if (
+            self.state.exhaustive_flags
+            and self.state.cycle < self.state.max_cycles
+            and (self.state.turns_used < self.state.max_turns)
+            and (self.state.cycle - self.state.last_progress_cycle) < 2
+        ):
+            # Only override here when at least one flag already landed (there is more
+            # to hunt); with zero flags, fall through so the normal nudges below fire.
+            if self.state.captured_flags and self._COMPLETE_RE.search(msg):
+                self._advance_phase_to("exploit")
+                prompt = (
+                    f"[AUTONOMY LOOP — CHƯA XONG, CẤM DỪNG] Đã có {len(self.state.captured_flags)} flag nhưng "
+                    f"mục tiêu là VÉT HẾT mọi lỗ hổng trên `{self.state.target}`. Bỏ qua các loại đã lấy flag, "
+                    f"chuyển sang lỗ hổng CHƯA khai thác (recon /robots.txt→/admin-portal/, IDOR /api/v1/invoices/999, "
+                    f"LFI /view?file=flag.txt, RCE /tools/ping host=127.0.0.1;id, SQLi /login admin'-- -) và thực thi lệnh NGAY."
+                )
+                cp = self.save_checkpoint("Exhaustive: chặn dừng sớm, tiếp tục vét lỗ hổng còn lại.")
                 return True, prompt, cp
 
         # 3. Check explicit completion marker from Agent
@@ -368,7 +480,15 @@ class AutonomyController:
                 for kw in ("báo cáo", "executive summary", "kết luận", "khuyến nghị", "findings", "tổng kết")
             )
         )
-        if has_report_structure and self.state.cycle >= 2:
+        # In exhaustive mode, a report-looking message does NOT end the run while
+        # budget remains and progress is not stuck (handled by #2/#5/#6 instead).
+        _exhaustive_hold = (
+            self.state.exhaustive_flags
+            and self.state.cycle < self.state.max_cycles
+            and self.state.turns_used < self.state.max_turns
+            and (self.state.cycle - self.state.last_progress_cycle) < 2
+        )
+        if has_report_structure and self.state.cycle >= 2 and not _exhaustive_hold:
             self._advance_phase_to("report")
             cp = self.save_checkpoint("Đã thực thi công cụ qua các pha và hoàn thành báo cáo tổng hợp.")
             return False, None, cp

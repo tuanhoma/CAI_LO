@@ -54,6 +54,7 @@ def run_api_server(
     chosen_port = _pick_available_port(host, port)
     if chosen_port != port:
         print(f"[CAI API] Port {port} busy. Using {chosen_port} instead.")
+    os.environ["CAI_ACTIVE_PORT"] = str(chosen_port)
     app = create_cai_api_app()
     log_level = os.getenv("CAI_API_LOG_LEVEL", "info")
 

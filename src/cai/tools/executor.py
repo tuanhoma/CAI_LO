@@ -1299,6 +1299,25 @@ def _run_local(
 # AND in common.py, these functions are defined once in this module and
 # common.py re-exports them.  See common.py for the backward-compat shim.
 
+def _route_log(msg: str) -> None:
+    """Diagnostic: record where an agent command was dispatched (Kali vs local).
+
+    Writes to the server console AND to D:/CAI_LO/route_debug.log so the routing
+    decision can be inspected after a run without reading the console window.
+    """
+    line = f"[ROUTE] {msg}"
+    try:
+        print(line, flush=True)
+    except Exception:
+        pass
+    try:
+        import time as _t
+        with open(os.path.join(os.getcwd(), "route_debug.log"), "a", encoding="utf-8") as _f:
+            _f.write(f"{_t.strftime('%H:%M:%S')} {line}\n")
+    except Exception:
+        pass
+
+
 async def run_command_async(
     command, ctf=None, stdout=False, async_mode=False, session_id=None,
     timeout=None, stream=False, call_id=None, tool_name=None, args=None,
@@ -1409,7 +1428,9 @@ async def run_command_async(
         # --- Reverse Runner (Kali Linux VM) ---
         try:
             from cai.runner.manager import runner_manager
-            if runner_manager.is_active():
+            _runner_up = runner_manager.is_active()
+            _route_log(f"async is_active={_runner_up} cmd={command[:70]!r}")
+            if _runner_up:
                 def _runner_stream_cb(chunk: str):
                     if stream and call_id:
                         OUTPUT.emit(ToolStreamEvent(
@@ -1436,8 +1457,8 @@ async def run_command_async(
                     duration_seconds=time.time() - _start_ts,
                 ))
                 return output_str
-        except Exception:
-            pass
+        except Exception as _e:
+            _route_log(f"async KALI dispatch FAILED -> local fallback: {_e!r}")
 
         if active_container and not is_ssh_env:
             result = await _run_docker_async(
@@ -1664,7 +1685,9 @@ def run_command(
         # --- Reverse Runner (Kali Linux VM) ---
         try:
             from cai.runner.manager import runner_manager
-            if runner_manager.is_active():
+            _runner_up = runner_manager.is_active()
+            _route_log(f"sync is_active={_runner_up} cmd={command[:70]!r}")
+            if _runner_up:
                 from cai.util import start_tool_streaming, update_tool_streaming, finish_tool_streaming
                 tool_args = args.copy() if isinstance(args, dict) else {"args": str(args or "")}
                 tool_args["environment"] = "Kali Runner"
@@ -1701,8 +1724,8 @@ def run_command(
                 stop_active_timer()
                 start_idle_timer()
                 return output_str
-        except Exception:
-            pass
+        except Exception as _e:
+            _route_log(f"sync KALI dispatch FAILED -> local fallback: {_e!r}")
 
         # --- Docker ---
         if active_container and not is_ssh_env:

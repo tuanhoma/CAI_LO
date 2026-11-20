@@ -27,9 +27,21 @@ from cai.tools.exploitation.exploit_delivery import deliver_exploit
 from cai.tools.exploitation.sqlmap import sqlmap
 
 
+# Specialists whose job is fast, repetitive terminal-command generation.
+# These are routed to CAI_MODEL_FAST (e.g. Groq Llama 3) when set.
+_FAST_AGENT_TYPES = {"recon_specialist", "web_exploiter", "infra_specialist"}
+
+
 def _get_model(agent_name: str, agent_type: str) -> OpenAIChatCompletionsModel:
     cfg = get_config()
-    model_name = os.getenv("CAI_MODEL", "alias1")
+    default_model = os.getenv("CAI_MODEL", "alias1")
+    # Role-based model routing:
+    #  - "doers" (recon/web/infra): CAI_MODEL_FAST (fast command gen, e.g. Groq) -> falls back to CAI_MODEL
+    #  - "thinker" (report analyst / anything else): CAI_MODEL_REASON (deep reasoning, e.g. Gemini) -> falls back to CAI_MODEL
+    if agent_type in _FAST_AGENT_TYPES:
+        model_name = os.getenv("CAI_MODEL_FAST") or default_model
+    else:
+        model_name = os.getenv("CAI_MODEL_REASON") or default_model
     return OpenAIChatCompletionsModel(
         model=model_name,
         openai_client=AsyncOpenAI(),

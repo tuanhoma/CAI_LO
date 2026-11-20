@@ -1,192 +1,243 @@
-import React, { useState } from "react";
-import { ShieldAlert, Download, FileJson, FileText, CheckCircle2, AlertTriangle, Search, Filter } from "lucide-react";
+import React, { useMemo, useState } from "react";
+import { ShieldAlert, FileJson, FileText, CheckCircle2, Search, KeyRound, Flame, AlertTriangle } from "lucide-react";
 import { useCampaignStore } from "../../stores/useCampaignStore";
 import { FindingItem } from "../../types";
+import { redactSecrets } from "../../utils/redact";
+import { Card, EmptyState, PageContainer, PageHeader, SecondaryButton, StatCard } from "../ui/Primitives";
+import { useI18n } from "../../i18n";
+
+const sevText: Record<string, string> = {
+  CRITICAL: "text-rose-600 dark:text-rose-400",
+  HIGH: "text-orange-600 dark:text-orange-400",
+  MEDIUM: "text-amber-600 dark:text-amber-400",
+  LOW: "text-sky-600 dark:text-sky-400",
+  INFO: "text-app-muted",
+};
+
+const sevBadge: Record<string, string> = {
+  CRITICAL: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30",
+  HIGH: "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/30",
+  MEDIUM: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30",
+  LOW: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30",
+  INFO: "bg-app-panel2 text-app-muted border-app-border",
+};
 
 export const FindingsTriageTab: React.FC = () => {
-  const { findings, target } = useCampaignStore();
+  const { findings, credentials, target, isRedactEnabled, setActivePage } = useCampaignStore();
+  const { t } = useI18n();
   const [filterSeverity, setFilterSeverity] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  const filtered = findings.filter((f) => {
-    if (filterSeverity !== "ALL" && f.severity !== filterSeverity) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const content = `${f.title} ${f.host} ${f.evidence || ""} ${f.source_tool || ""}`.toLowerCase();
-      if (!content.includes(q)) return false;
-    }
-    return true;
-  });
+  const sevCount = (sev: FindingItem["severity"]) => findings.filter((f) => f.severity === sev).length;
 
-  const exportMarkdown = () => {
-    let md = `# BÁO CÁO PHÁT HIỆN LỖ HỔNG (FINDINGS TRIAGE REPORT)\n`;
-    md += `**Mục tiêu:** \`${target || "None"}\`\n`;
-    md += `**Thời gian xuất:** \`${new Date().toISOString()}\`\n`;
-    md += `**Tổng số phát hiện:** ${findings.length}\n\n---\n\n`;
-
-    findings.forEach((f, idx) => {
-      md += `### ${idx + 1}. [${f.severity}] ${f.title}\n`;
-      md += `- **Host:** \`${f.host}\`\n`;
-      if (f.source_tool) md += `- **Nguồn phát hiện:** \`${f.source_tool}\`\n`;
-      if (f.updated_at) md += `- **Thời gian:** \`${f.updated_at}\`\n`;
-      if (f.evidence) {
-        md += `\n**Bằng chứng (Evidence):**\n\`\`\`\n${f.evidence}\n\`\`\`\n`;
+  const filtered = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return findings.filter((f) => {
+      if (filterSeverity !== "ALL" && f.severity !== filterSeverity) return false;
+      if (q) {
+        const content = `${f.title} ${f.host} ${f.evidence || ""} ${f.source_tool || ""}`.toLowerCase();
+        if (!content.includes(q)) return false;
       }
-      md += `\n---\n\n`;
+      return true;
     });
+  }, [findings, filterSeverity, searchQuery]);
 
-    const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+  const download = (data: string, mime: string, name: string) => {
+    const blob = new Blob([data], { type: mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `findings_report_${new Date().toISOString().slice(0, 10)}.md`;
+    a.download = name;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const exportMarkdown = () => {
+    let md = `# ${t("BÁO CÁO PHÁT HIỆN LỖ HỔNG", "VULNERABILITY FINDINGS REPORT")}\n`;
+    md += `**${t("Mục tiêu", "Target")}:** \`${target || "None"}\`\n`;
+    md += `**${t("Thời gian xuất", "Exported at")}:** \`${new Date().toISOString()}\`\n`;
+    md += `**${t("Tổng số phát hiện", "Total findings")}:** ${findings.length}\n\n---\n\n`;
+    findings.forEach((f, idx) => {
+      const ev = redactSecrets(f.evidence || "", isRedactEnabled);
+      md += `### ${idx + 1}. [${f.severity}] ${f.title}\n`;
+      md += `- **Host:** \`${f.host}\`\n`;
+      if (f.source_tool) md += `- **${t("Nguồn", "Source")}:** \`${f.source_tool}\`\n`;
+      if (f.updated_at) md += `- **${t("Thời gian", "Time")}:** \`${f.updated_at}\`\n`;
+      if (ev) md += `\n**${t("Bằng chứng", "Evidence")}:**\n\`\`\`\n${ev}\n\`\`\`\n`;
+      md += `\n---\n\n`;
+    });
+    download(md, "text/markdown;charset=utf-8", `findings_report_${new Date().toISOString().slice(0, 10)}.md`);
   };
 
   const exportJson = () => {
-    const data = JSON.stringify({ target, export_date: new Date().toISOString(), findings }, null, 2);
-    const blob = new Blob([data], { type: "application/json;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `findings_${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const safeFindings = findings.map((f) => ({
+      ...f,
+      evidence: f.evidence ? redactSecrets(f.evidence, isRedactEnabled) : f.evidence,
+    }));
+    const data = JSON.stringify({ target, export_date: new Date().toISOString(), findings: safeFindings }, null, 2);
+    download(data, "application/json;charset=utf-8", `findings_${new Date().toISOString().slice(0, 10)}.json`);
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#06090e] font-mono text-xs overflow-hidden">
-      {/* Top Header & Export Buttons */}
-      <div className="h-10 px-3 border-b border-cyber-border bg-cyber-panel2 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <ShieldAlert className="w-4 h-4 text-cyber-red" />
-          <span className="font-semibold text-cyber-text">🔎 Phát hiện · nghi ngờ — cần xác minh</span>
-          <span className="text-[11px] px-2 py-0.5 rounded-full bg-cyber-panel border border-cyber-border text-cyber-cyan">
-            {findings.length} mục
-          </span>
-        </div>
+    <PageContainer fullHeight>
+      <PageHeader
+        title={t("Phát hiện", "Findings")}
+        subtitle={`${findings.length} ${t("lỗ hổng ghi nhận · tổng hợp từ agent & terminal", "findings recorded · aggregated from agents & terminal")}`}
+        actions={
+          <>
+            <SecondaryButton size="sm" onClick={exportMarkdown} disabled={findings.length === 0}>
+              <FileText className="w-3.5 h-3.5" aria-hidden="true" /> {t("Xuất .md", "Export .md")}
+            </SecondaryButton>
+            <SecondaryButton size="sm" onClick={exportJson} disabled={findings.length === 0}>
+              <FileJson className="w-3.5 h-3.5" aria-hidden="true" /> {t("Xuất .json", "Export .json")}
+            </SecondaryButton>
+          </>
+        }
+      />
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={exportMarkdown}
-            className="px-2.5 py-1 rounded bg-cyber-panel border border-cyber-border text-[11px] text-cyber-muted hover:text-cyber-text hover:border-cyber-cyan/50 flex items-center gap-1.5 transition-all"
-            title="Xuất danh sách dạng Markdown"
-          >
-            <FileText className="w-3.5 h-3.5 text-cyber-cyan" />
-            <span>Xuất .md</span>
-          </button>
-
-          <button
-            onClick={exportJson}
-            className="px-2.5 py-1 rounded bg-cyber-panel border border-cyber-border text-[11px] text-cyber-muted hover:text-cyber-text hover:border-cyber-amber/50 flex items-center gap-1.5 transition-all"
-            title="Xuất danh sách dạng JSON"
-          >
-            <FileJson className="w-3.5 h-3.5 text-cyber-amber" />
-            <span>.json</span>
-          </button>
-        </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4 shrink-0">
+        <StatCard
+          icon={ShieldAlert}
+          label={t("Tổng", "Total")}
+          value={findings.length}
+          active={filterSeverity === "ALL"}
+          onClick={() => setFilterSeverity("ALL")}
+        />
+        <StatCard
+          icon={Flame}
+          label="Critical"
+          value={sevCount("CRITICAL")}
+          active={filterSeverity === "CRITICAL"}
+          onClick={() => setFilterSeverity("CRITICAL")}
+        />
+        <StatCard
+          icon={AlertTriangle}
+          label="High"
+          value={sevCount("HIGH")}
+          active={filterSeverity === "HIGH"}
+          onClick={() => setFilterSeverity("HIGH")}
+        />
+        <StatCard
+          icon={AlertTriangle}
+          label="Medium"
+          value={sevCount("MEDIUM")}
+          active={filterSeverity === "MEDIUM"}
+          onClick={() => setFilterSeverity("MEDIUM")}
+        />
+        <StatCard
+          icon={ShieldAlert}
+          label="Low"
+          value={sevCount("LOW")}
+          active={filterSeverity === "LOW"}
+          onClick={() => setFilterSeverity("LOW")}
+        />
+        <StatCard
+          icon={KeyRound}
+          label="Creds / Flags"
+          value={credentials.length}
+          onClick={() => setActivePage("memory")}
+        />
       </div>
 
-      {/* Filter and Search Bar */}
-      <div className="p-2.5 border-b border-cyber-border bg-[#080d14] flex flex-wrap items-center justify-between gap-2 text-xs">
-        <div className="flex items-center gap-1.5">
-          {["ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW"].map((sev) => (
-            <button
-              key={sev}
-              onClick={() => setFilterSeverity(sev)}
-              className={`px-2 py-0.5 rounded text-[11px] border transition-all ${
-                filterSeverity === sev
-                  ? sev === "CRITICAL"
-                    ? "bg-cyber-red/20 border-cyber-red text-cyber-red font-bold"
-                    : sev === "HIGH"
-                    ? "bg-orange-500/20 border-orange-500 text-orange-400 font-bold"
-                    : "bg-cyber-neon/20 border-cyber-neon text-cyber-neon font-bold"
-                  : "bg-cyber-panel2 border-cyber-border text-cyber-muted hover:text-cyber-text"
-              }`}
-            >
-              {sev}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-2 flex-1 max-w-xs">
-          <Search className="w-3.5 h-3.5 text-cyber-muted" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Tìm theo tiêu đề, host, evidence..."
-            className="w-full bg-cyber-panel border border-cyber-border rounded px-2 py-1 text-xs text-cyber-text focus:outline-none focus:border-cyber-cyan"
-          />
-        </div>
-      </div>
-
-      {/* Findings List */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
-        {filtered.length === 0 ? (
-          <div className="h-48 flex flex-col items-center justify-center text-cyber-muted space-y-2 font-mono text-center">
-            <CheckCircle2 className="w-8 h-8 text-cyber-muted/40" />
-            <p className="text-xs">Chưa có phát hiện nào. Các kết quả nghi có lỗ hổng sẽ hiện ở đây để bạn phân loại.</p>
-          </div>
-        ) : (
-          filtered.map((f, idx) => {
-            const isCrit = f.severity === "CRITICAL";
-            const isHigh = f.severity === "HIGH";
-            return (
-              <div
-                key={idx}
-                className={`p-3 rounded-lg border font-mono transition-all ${
-                  isCrit
-                    ? "bg-cyber-red/5 border-cyber-red/30 hover:border-cyber-red"
-                    : isHigh
-                    ? "bg-amber-500/5 border-amber-500/30 hover:border-amber-500"
-                    : "bg-cyber-panel2 border-cyber-border hover:border-cyber-cyan/50"
+      <Card className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        <div className="px-4 py-3 border-b border-app-border bg-app-panel2/40 flex flex-wrap items-center justify-between gap-2.5 shrink-0">
+          <div className="inline-flex rounded-lg border border-app-border bg-app-panel p-0.5 text-xs overflow-x-auto">
+            {["ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW"].map((sev) => (
+              <button
+                key={sev}
+                type="button"
+                onClick={() => setFilterSeverity(sev)}
+                className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer ${
+                  filterSeverity === sev ? "bg-app-active text-app-text" : "text-app-muted hover:text-app-text"
                 }`}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="space-y-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                          isCrit
-                            ? "bg-cyber-red/20 text-cyber-red border border-cyber-red/40"
-                            : isHigh
-                            ? "bg-orange-500/20 text-orange-400 border border-orange-500/40"
-                            : "bg-cyber-panel text-cyber-cyan border border-cyber-border"
-                        }`}
-                      >
-                        {f.severity}
-                      </span>
-                      <span className="font-semibold text-cyber-text text-xs break-all">{f.title}</span>
-                    </div>
+                {sev === "ALL" ? t("Tất cả", "All") : sev}
+              </button>
+            ))}
+          </div>
 
-                    <div className="text-[11px] text-cyber-muted flex items-center gap-3">
-                      <span>Host: <b className="text-cyber-text">{f.host}</b></span>
-                      {f.source_tool && <span>Tool: <b className="text-cyber-cyan">{f.source_tool}</b></span>}
-                      {f.updated_at && <span>{f.updated_at.split("T")[1]?.slice(0, 8)}</span>}
+          <div className="flex items-center gap-2 h-8 px-3 rounded-lg bg-app-panel border border-app-border w-full sm:w-64">
+            <Search className="w-3.5 h-3.5 text-app-muted shrink-0" aria-hidden="true" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t("Tìm tiêu đề, host, evidence…", "Search title, host, evidence…")}
+              aria-label={t("Tìm lỗ hổng", "Search findings")}
+              className="w-full bg-transparent text-xs text-app-text placeholder:text-app-muted/70 focus:outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-2.5">
+          {filtered.length === 0 ? (
+            <EmptyState
+              icon={CheckCircle2}
+              title={t("Chưa có phát hiện phù hợp", "No matching findings")}
+              description={t(
+                "Các lỗ hổng nghi ngờ hoặc đã xác minh PoC từ agent sẽ xuất hiện tại đây.",
+                "Suspected or verified PoC vulnerabilities discovered by agents will appear here."
+              )}
+              action={
+                findings.length === 0 ? (
+                  <SecondaryButton size="sm" onClick={() => setActivePage("mission")}>
+                    {t("Đi tới Chiến dịch", "Go to Mission")}
+                  </SecondaryButton>
+                ) : undefined
+              }
+              className="h-full min-h-[220px]"
+            />
+          ) : (
+            filtered.map((f, idx) => {
+              const safeEvidence = f.evidence ? redactSecrets(f.evidence, isRedactEnabled) : "";
+              return (
+                <div
+                  key={f.id ?? idx}
+                  className="p-3.5 rounded-xl bg-app-panel2/40 border border-app-border hover:border-app-text/20 transition-colors"
+                >
+                  <div className="flex items-start gap-2.5">
+                    <span
+                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-md border shrink-0 mt-0.5 ${
+                        sevBadge[f.severity] || sevBadge.INFO
+                      }`}
+                    >
+                      {f.severity}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium text-sm text-app-text break-words">{f.title}</div>
+                      <div className="text-xs text-app-muted flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1">
+                        <span>
+                          Host: <b className="text-app-text font-mono">{f.host}</b>
+                        </span>
+                        {f.source_tool && (
+                          <span>
+                            Tool: <b className={sevText.LOW}>{f.source_tool}</b>
+                          </span>
+                        )}
+                        {f.updated_at && (
+                          <span className="font-mono tabular-nums">{f.updated_at.split("T")[1]?.slice(0, 8)}</span>
+                        )}
+                      </div>
                     </div>
                   </div>
+                  {safeEvidence && (
+                    <details className="mt-2.5 text-xs">
+                      <summary className="text-app-accent hover:underline select-none cursor-pointer font-medium">
+                        {t("Xem bằng chứng (Evidence)", "View evidence")}
+                      </summary>
+                      <pre className="mt-2 p-3 rounded-lg bg-app-panel border border-app-border text-app-text text-[11px] overflow-x-auto whitespace-pre-wrap break-words max-h-56 font-mono">
+                        {safeEvidence}
+                      </pre>
+                    </details>
+                  )}
                 </div>
-
-                {f.evidence && (
-                  <details className="mt-2 text-[11px] cursor-pointer">
-                    <summary className="text-cyber-cyan hover:underline select-none">Xem bằng chứng kỹ thuật (Evidence)</summary>
-                    <pre className="mt-1.5 p-2 rounded bg-[#040609] border border-cyber-border text-cyber-muted text-[11px] overflow-x-auto whitespace-pre-wrap word-break-all max-h-48">
-                      {f.evidence}
-                    </pre>
-                  </details>
-                )}
-              </div>
-            );
-          })
-        )}
-      </div>
-    </div>
+              );
+            })
+          )}
+        </div>
+      </Card>
+    </PageContainer>
   );
 };
-

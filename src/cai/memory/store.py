@@ -446,20 +446,31 @@ class CampaignMemoryStore:
             lines.append(f"- Endpoint Web đã phát hiện: {', '.join(ep_strs)}")
 
         if data["credentials"]:
+            # INTEGRITY: never inject captured FLAG{...} values — a flag is the
+            # objective, not reusable intel. Seeding it lets a weak model "report"
+            # it as done without re-exploiting. Credentials (real creds) are fine
+            # as hints, but flag-shaped secrets are filtered out.
+            import re as _re
+            _is_flag = lambda s: bool(_re.search(r"(?:flag|cbjs|ctf)\{", str(s or ""), _re.I))
             cred_strs = [
                 f"[{c['secret_type']}] {c['username']}:{c['secret']} ({c['service']})"
                 if c.get("username")
                 else f"[{c['secret_type']}] {c['secret']}"
                 for c in data["credentials"][:10]
+                if not _is_flag(c.get("secret")) and str(c.get("secret_type", "")).lower() != "flag"
             ]
-            lines.append(f"- Tài khoản / Cờ đã thu thập: {', '.join(cred_strs)}")
+            if cred_strs:
+                lines.append(f"- Thông tin xác thực đã thu được (gợi ý): {', '.join(cred_strs)}")
 
         if data["findings"]:
             f_strs = [f"[{f['severity']}] {f['title']}" for f in data["findings"][:8]]
-            lines.append(f"- Lỗ hổng đã ghi nhận: {'; '.join(f_strs)}")
+            lines.append(f"- Lỗ hổng từng ghi nhận (GỢI Ý recon — CHƯA xác nhận lại): {'; '.join(f_strs)}")
 
         lines.append(
-            "👉 Kế thừa trực tiếp các dữ kiện trong Trí nhớ chiến dịch ở trên để nối chuỗi kiểm thử, không quét lặp lại các bước đã có kết quả."
+            "👉 Đây CHỈ là gợi ý recon từ các phiên trước, có thể đã lỗi thời. "
+            "BẮT BUỘC tự khai thác & xác minh lại TỪNG lỗ hổng bằng tool call THẬT trong phiên NÀY. "
+            "TUYỆT ĐỐI KHÔNG kết luận hoàn tất hay báo cáo một FLAG nào mà bạn chưa tự trích xuất được "
+            "từ output tool thật trong phiên này — trí nhớ KHÔNG thay thế cho việc chạy lại lệnh."
         )
         return "\n".join(lines)
 

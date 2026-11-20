@@ -8,13 +8,17 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import ipaddress
 import logging
 import os
+import re
 import secrets
+import socket
+import subprocess
 import threading
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("cai.runner")
 
@@ -88,8 +92,13 @@ class RunnerManager:
         self._tasks: Dict[str, RunnerTask] = {}
         self._terminal_events: List[Dict[str, Any]] = []
         self._terminal_seq: int = 0
-        self._agent_recent_commands: collections.deque[str] = collections.deque(maxlen=10)
+        # BACKUP (bản gốc trước 2026-11-09): nhớ 10 lệnh. Đổi 10->40 để không bị trôi khi
+        # agent xen kẽ nhiều endpoint. Muốn quay lại: đổi maxlen=40 về maxlen=10.
+        # self._agent_recent_commands: collections.deque[str] = collections.deque(maxlen=10)
+        self._agent_recent_commands: collections.deque[str] = collections.deque(maxlen=40)
         self._state_lock = threading.RLock()
+        self._endpoint_cache_ts: float = 0.0
+        self._endpoint_cache: List[Dict[str, str]] = []
         # Shared secret token
         env_token = os.getenv("CAI_RUNNER_TOKEN", "").strip()
         if not env_token:
@@ -180,16 +189,13 @@ class RunnerManager:
                         "last_seen_seconds": int(time.time() - r.last_seen),
                     }
                 )
-            # Detect controller host IPs for 1-click Kali connection command
-            controller_ips: List[str] = []
+            endpoints = self.get_controller_endpoints()
+            controller_ips = [e["ip"] for e in endpoints]
+            preferred_ip = self.get_preferred_ip(endpoints=endpoints)
             try:
-                import socket
-                for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
-                    if not ip.startswith("127."):
-                        controller_ips.append(ip)
-            except Exception:
-                pass
-            preferred_ip = self.get_preferred_ip()
+                active_port = int(os.getenv("CAI_ACTIVE_PORT") or os.getenv("CAI_API_PORT") or "8000")
+            except ValueError:
+                active_port = 8000
 
             return {
                 "active": len(runners_info) > 0,
@@ -197,7 +203,9 @@ class RunnerManager:
                 "runners": runners_info,
                 "token": self._token,
                 "controller_ips": controller_ips,
+                "controller_endpoints": endpoints,
                 "preferred_ip": preferred_ip,
+                "port": active_port,
             }
 
     def register_runner(
@@ -313,33 +321,239 @@ class RunnerManager:
 
         return True
 
-    def get_preferred_ip(self) -> str:
-        """Get best host IP for Kali VM connection."""
+    @staticmethod
+    def _is_usable_ipv4(ip: str) -> bool:
         try:
-            import socket
-            ips = [ip for ip in socket.gethostbyname_ex(socket.gethostname())[2] if not ip.startswith("127.")]
+            addr = ipaddress.IPv4Address(ip.strip())
+            return not (addr.is_loopback or addr.is_link_local or addr.is_multicast or addr.is_unspecified)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _discover_raw_adapters() -> List[Tuple[str, str]]:
+        """Enumerate (adapter_name, ipv4) pairs dynamically across Windows, Linux, and WSL."""
+        found: List[Tuple[str, str]] = []
+
+        if os.name == "nt":
+            try:
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                out = subprocess.check_output(
+                    ["ipconfig"],
+                    stderr=subprocess.DEVNULL,
+                    timeout=3,
+                    creationflags=creationflags,
+                ).decode("utf-8", errors="ignore")
+                current_adapter = "Network Adapter"
+                for raw_line in out.splitlines():
+                    line = raw_line.rstrip()
+                    if not line:
+                        continue
+                    if not line[0].isspace() and line.endswith(":"):
+                        current_adapter = re.sub(
+                            r"^(?:Ethernet adapter|Wireless LAN adapter|Unknown adapter)\s+",
+                            "",
+                            line[:-1].strip(),
+                            flags=re.I,
+                        )
+                        continue
+                    if "IPv4" in line or "IP Address" in line:
+                        m = re.search(r"(\d{1,3}(?:\.\d{1,3}){3})", line)
+                        if m:
+                            found.append((current_adapter, m.group(1)))
+            except Exception:
+                pass
+        else:
+            try:
+                out = subprocess.check_output(
+                    ["ip", "-o", "-4", "addr", "show"],
+                    stderr=subprocess.DEVNULL,
+                    timeout=2,
+                ).decode("utf-8", errors="ignore")
+                for line in out.splitlines():
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        iface = parts[1]
+                        ip = parts[3].split("/")[0]
+                        found.append((iface, ip))
+            except Exception:
+                pass
+
+            # In WSL2, also expose Windows host gateway IP if reachable
+            try:
+                with open("/proc/version", "r", encoding="utf-8", errors="ignore") as f:
+                    if "microsoft" in f.read().lower():
+                        rt = subprocess.check_output(
+                            ["ip", "route", "show", "default"],
+                            stderr=subprocess.DEVNULL,
+                            timeout=2,
+                        ).decode("utf-8", errors="ignore")
+                        m = re.search(r"default via (\d{1,3}(?:\.\d{1,3}){3})", rt)
+                        if m:
+                            found.append(("Windows Host (WSL Gateway)", m.group(1)))
+            except Exception:
+                pass
+
+        # Outbound LAN IP via UDP socket (no actual packet sent)
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            lan_ip = s.getsockname()[0]
+            s.close()
+            found.append(("Default LAN", lan_ip))
+        except Exception:
+            pass
+
+        # Hostname resolution fallback
+        try:
+            for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+                found.append(("Host Interface", ip))
+        except Exception:
+            pass
+
+        return found
+
+    @staticmethod
+    def _classify_adapter(name: str, ip: str) -> Tuple[int, str, str]:
+        """Return (priority_score, short_label, kind) for sorting controller IPs."""
+        nl = (name or "").lower()
+        if "vmnet8" in nl:
+            return (90, "VMware VMnet8 (NAT)", "vm")
+        if "vmnet1" in nl:
+            return (86, "VMware VMnet1 (Host-Only)", "vm")
+        if "vmware" in nl or "vmnet" in nl:
+            return (85, name[:32], "vm")
+        if "virtualbox" in nl or "vbox" in nl or ip == "192.168.56.1":
+            return (84, "VirtualBox Host-Only", "vm")
+        if "windows host" in nl:
+            return (82, "Windows Host", "vm")
+        if "tailscale" in nl or "zerotier" in nl or "wireguard" in nl or nl.startswith(("wg", "tun", "tap")):
+            return (55, name[:32], "vpn")
+        if "wsl" in nl or "hyper-v" in nl or "vethernet" in nl:
+            return (42, "WSL / Hyper-V", "virtual")
+        if "docker" in nl or nl.startswith(("br-", "veth")) or ip.startswith("172.17."):
+            return (15, "Docker Bridge", "virtual")
+        if nl in ("host interface", "default lan"):
+            return (20, name, "other")
+        if "wi-fi" in nl or "wifi" in nl or "wlan" in nl:
+            return (70, "Wi-Fi LAN", "lan")
+        if "ethernet" in nl or nl.startswith(("eth", "enp", "eno", "en")):
+            return (72, "Ethernet LAN", "lan")
+        if ip.startswith("192.168.") and ip.endswith(".1"):
+            return (78, "Host / Gateway (.1)", "vm")
+        if ip.startswith(("192.168.", "10.")):
+            return (65, name[:32] or "LAN", "lan")
+        return (40, name[:32] or "Interface", "other")
+
+    def get_controller_endpoints(self, force_refresh: bool = False) -> List[Dict[str, str]]:
+        """Return ranked candidate controller IPs with human-readable adapter labels."""
+        now = time.time()
+        with self._state_lock:
+            if not force_refresh and self._endpoint_cache and (now - self._endpoint_cache_ts < 20.0):
+                base_list = list(self._endpoint_cache)
+            else:
+                base_list = []
+
+        if not base_list:
+            raw_pairs = self._discover_raw_adapters()
+            by_ip: Dict[str, Tuple[int, str, str]] = {}
+            for name, ip in raw_pairs:
+                if not self._is_usable_ipv4(ip):
+                    continue
+                score, label, kind = self._classify_adapter(name, ip)
+                prev = by_ip.get(ip)
+                # Prefer more descriptive adapter name if same IP discovered twice
+                if prev is None or score > prev[0] or (score == prev[0] and label not in ("Host Interface", "Default LAN")):
+                    by_ip[ip] = (score, label, kind)
+
+            ranked = sorted(by_ip.items(), key=lambda kv: (-kv[1][0], kv[0]))
+            base_list = [{"ip": ip, "label": info[1], "kind": info[2]} for ip, info in ranked]
             with self._state_lock:
-                for r in self._runners.values():
-                    if r.client_ip and r.client_ip != "127.0.0.1":
-                        if r.client_ip in ips:
-                            return r.client_ip
-                        prefix = ".".join(r.client_ip.split(".")[:3]) + "."
-                        for ip in ips:
-                            if ip.startswith(prefix):
-                                return ip
-            vm_ips = [ip for ip in ips if ip.startswith("192.168.106.") or ip.startswith("192.168.95.")]
-            if vm_ips:
-                return vm_ips[0]
-            lan_ips = [ip for ip in ips if ip.startswith("192.168.")]
-            if lan_ips:
-                return lan_ips[0]
-            return ips[0] if ips else "127.0.0.1"
+                self._endpoint_cache = list(base_list)
+                self._endpoint_cache_ts = now
+
+        # Boost explicit override or active connected runner subnet dynamically
+        env_host = (os.getenv("CAI_CONTROLLER_HOST") or os.getenv("CAI_RUNNER_HOST") or "").strip()
+        boosted_ips: List[str] = []
+        if env_host:
+            boosted_ips.append(env_host)
+
+        with self._state_lock:
+            for r in self._runners.values():
+                if r.client_ip and r.client_ip != "127.0.0.1":
+                    prefix = ".".join(r.client_ip.split(".")[:3]) + "."
+                    for item in base_list:
+                        if item["ip"] == r.client_ip or item["ip"].startswith(prefix):
+                            boosted_ips.append(item["ip"])
+
+        if not boosted_ips:
+            return base_list
+
+        out: List[Dict[str, str]] = []
+        seen = set()
+        if env_host and all(item["ip"] != env_host for item in base_list):
+            out.append({"ip": env_host, "label": "Configured (.env)", "kind": "custom"})
+            seen.add(env_host)
+        for bip in boosted_ips:
+            for item in base_list:
+                if item["ip"] == bip and bip not in seen:
+                    out.append(item)
+                    seen.add(bip)
+        for item in base_list:
+            if item["ip"] not in seen:
+                out.append(item)
+                seen.add(item["ip"])
+        return out
+
+    def get_preferred_ip(self, endpoints: Optional[List[Dict[str, str]]] = None) -> str:
+        """Get best host IP for Kali VM connection dynamically on any machine."""
+        try:
+            eps = endpoints if endpoints is not None else self.get_controller_endpoints()
+            return eps[0]["ip"] if eps else "127.0.0.1"
         except Exception:
             return "127.0.0.1"
 
     # ------------------------------------------------------------------
     # Dispatch execution (used by CAI executor)
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _command_signature(command: str) -> str:
+        """Chữ ký lệnh để chống lặp: gộp các biến thể chỉ khác cờ về cùng 1 khóa.
+
+        Gộp theo (tool | method | host+path | vân tay payload):
+          - `curl -s /hints`, `curl -sL /hints`, `curl -s -i "/hints"`  -> CÙNG khóa
+          - nhưng 2 lần POST /login với DỮ LIỆU khác nhau  -> khóa khác (không chặn nhầm
+            việc thử credential/payload khác nhau, chỉ chặn lặp y hệt).
+        """
+        import re
+        c = " ".join(str(command).strip().lower().split())
+        toks = c.split()
+        tool = toks[0] if toks else ""
+
+        # HTTP method (curl -X POST/GET...); mặc định post nếu có cờ data mà không ghi -X
+        method = ""
+        mm = re.search(r"-x\s+(get|post|put|delete|head|patch|options)", c)
+        if mm:
+            method = mm.group(1)
+        elif re.search(r"(--data-urlencode|--data\b|--data-raw|-d\s)", c):
+            method = "post"
+        if method == "get":
+            method = ""  # GET là mặc định -> gộp với `curl` không ghi -X
+
+        # Mục tiêu: URL http(s) -> host+path (bỏ query); nếu không có URL (nmap/dig/nc/openssl)
+        # thì lấy vài token không phải cờ (host/ip/port).
+        um = re.search(r"https?://([^\s\"'`]+)", c)
+        if um:
+            target = um.group(1).split("?", 1)[0].rstrip("/")
+        else:
+            non_flags = [t for t in toks[1:] if not t.startswith("-")]
+            target = " ".join(non_flags[:3])
+
+        # Vân tay payload: gom các giá trị --data/-d để phân biệt payload khác nhau.
+        data_vals = re.findall(r"(?:--data-urlencode|--data-raw|--data|-d)\s+[\"']?([^\"']{0,60})", c)
+        data_fp = "&".join(v.strip() for v in data_vals)[:80]
+
+        return f"{tool}|{method}|{target}|{data_fp}"
 
     def execute_sync(
         self,
@@ -371,7 +585,10 @@ class RunnerManager:
                 command = rewritten
 
         if source == "agent":
-            norm_cmd = " ".join(command.strip().lower().split())
+            # BACKUP (bản gốc): so khớp CHUỖI THÔ -> biến thể cờ curl (-s/-sL/-i) lọt qua, lặp vô hạn.
+            # Muốn quay lại: bỏ comment dòng dưới và comment dòng _command_signature.
+            # norm_cmd = " ".join(command.strip().lower().split())
+            norm_cmd = self._command_signature(command)
             with self._state_lock:
                 repeat_count = self._agent_recent_commands.count(norm_cmd)
                 self._agent_recent_commands.append(norm_cmd)

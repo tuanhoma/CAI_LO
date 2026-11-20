@@ -266,48 +266,98 @@ class ReverseRunner:
                 time.sleep(3)
 
 
-def find_controller_server(explicit_server: Optional[str] = None) -> str:
+def _collect_local_gateway_candidates(port: int) -> List[str]:
+    """Discover host controller URLs from Kali Linux routing table and attached subnets."""
+    candidates: List[str] = []
+
+    def _add(ip: str) -> None:
+        if not ip or ip.startswith("0.") or ip.startswith("169.254."):
+            return
+        url = f"http://{ip}:{port}"
+        if url not in candidates:
+            candidates.append(url)
+
+    # 1. Inspect /proc/net/route for all gateways and attached /24 VM subnets
+    try:
+        import struct
+        with open("/proc/net/route", "r", encoding="utf-8", errors="ignore") as f:
+            for line in f.readlines()[1:]:
+                fields = line.strip().split()
+                if len(fields) < 8:
+                    continue
+                dest_hex, gw_hex, mask_hex = fields[1], fields[2], fields[7]
+                if gw_hex != "00000000":
+                    gw_ip = socket.inet_ntoa(struct.pack("<L", int(gw_hex, 16)))
+                    if gw_ip.endswith(".2"):
+                        _add(gw_ip[:-1] + "1")  # VMware NAT host adapter (.1)
+                    _add(gw_ip)
+                elif dest_hex != "00000000" and mask_hex == "00FFFFFF":
+                    net_ip = socket.inet_ntoa(struct.pack("<L", int(dest_hex, 16)))
+                    parts = net_ip.split(".")
+                    if len(parts) == 4 and parts[3] == "0":
+                        _add(f"{parts[0]}.{parts[1]}.{parts[2]}.1")
+    except Exception:
+        pass
+
+    # 2. Check local interface subnets via `ip` command (covers secondary NICs)
+    try:
+        out = subprocess.check_output(
+            ["ip", "-o", "-4", "addr", "show"],
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).decode("utf-8", errors="ignore")
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 4:
+                ip_part = parts[3].split("/")[0]
+                octets = ip_part.split(".")
+                if len(octets) == 4 and not ip_part.startswith("127."):
+                    _add(f"{octets[0]}.{octets[1]}.{octets[2]}.1")
+    except Exception:
+        pass
+
+    # 3. Standard hypervisor fallback IPs (VirtualBox NAT/Host-Only, loopback)
+    for ip in ("10.0.2.2", "192.168.56.1", "127.0.0.1"):
+        _add(ip)
+
+    return candidates
+
+
+def find_controller_server(explicit_server: Optional[str] = None, port: int = 8000) -> str:
     """Auto-detect or resolve reachable CAI controller server URL."""
-    candidates = []
-    if explicit_server and explicit_server.strip():
-        candidates.append(explicit_server.strip().rstrip("/"))
+    candidates: List[str] = []
+    explicit_clean = (explicit_server or "").strip().rstrip("/")
+    if explicit_clean and explicit_clean.lower() != "auto":
+        candidates.append(explicit_clean)
+        # Extract port from explicit --server so fallback discovery probes the same port
+        try:
+            parsed = urllib.parse.urlparse(explicit_clean)
+            if parsed.port:
+                port = parsed.port
+        except Exception:
+            pass
 
     env_srv = os.getenv("CAI_SERVER", "").strip().rstrip("/")
     if env_srv and env_srv not in candidates:
         candidates.append(env_srv)
 
-    # Auto-detect gateway/host IP from Linux routing table (VMware / VBox)
-    try:
-        with open("/proc/net/route") as f:
-            for line in f:
-                fields = line.strip().split()
-                if len(fields) >= 3 and fields[1] == "00000000":
-                    import struct
-                    gw_ip = socket.inet_ntoa(struct.pack("<L", int(fields[2], 16)))
-                    candidates.append(f"http://{gw_ip}:8000")
-                    if gw_ip.endswith(".2"):
-                        host_ip = gw_ip[:-1] + "1"
-                        candidates.append(f"http://{host_ip}:8000")
-    except Exception:
-        pass
-
-    # Common VM hypervisor host IPs
-    for ip in ["192.168.100.88", "10.0.2.2", "192.168.56.1", "127.0.0.1"]:
-        cand = f"http://{ip}:8000"
+    for cand in _collect_local_gateway_candidates(port):
         if cand not in candidates:
             candidates.append(cand)
 
     # Probe candidates for /api/v1/runner/status
-    for srv in candidates:
+    for idx, srv in enumerate(candidates):
         try:
             req = urllib.request.Request(f"{srv}/api/v1/runner/status", headers={"User-Agent": "CAI-Probe"})
-            with urllib.request.urlopen(req, timeout=1.5) as resp:
+            with urllib.request.urlopen(req, timeout=1.2) as resp:
                 if resp.status == 200:
+                    if explicit_clean and explicit_clean.lower() != "auto" and idx > 0:
+                        print(f"{YELLOW}[!] Could not reach {explicit_clean}; auto-discovered controller at {srv}{RESET}")
                     return srv
         except Exception:
             continue
 
-    return candidates[0] if candidates else "http://127.0.0.1:8000"
+    return candidates[0] if candidates else f"http://127.0.0.1:{port}"
 
 
 def main():
@@ -315,7 +365,13 @@ def main():
     parser.add_argument(
         "--server",
         default=None,
-        help="URL of the CAI Windows Controller (auto-detected if omitted)",
+        help="URL of the CAI Windows Controller (omit or use 'auto' to auto-discover)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Controller port for auto-discovery when --server is omitted (default: 8000)",
     )
     parser.add_argument(
         "--token",
@@ -329,7 +385,7 @@ def main():
     )
     args = parser.parse_args()
 
-    resolved_server = find_controller_server(args.server)
+    resolved_server = find_controller_server(args.server, port=args.port)
 
     runner = ReverseRunner(
         server_url=resolved_server,

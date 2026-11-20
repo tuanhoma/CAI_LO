@@ -8,41 +8,29 @@ export default {
   theme: {
     extend: {
       colors: {
-        cyber: {
-          bg: "#070a0f",
-          panel: "#0c111a",
-          panel2: "#111824",
-          border: "#1d283a",
-          text: "#d7dee8",
-          muted: "#627285",
-          neon: "#3ddc84",
-          cyan: "#00f0ff",
-          red: "#ff3366",
-          amber: "#fcee0a",
-          purple: "#b026ff",
+        app: {
+          bg: "rgb(var(--app-bg) / <alpha-value>)",
+          panel: "rgb(var(--app-panel) / <alpha-value>)",
+          panel2: "rgb(var(--app-panel2) / <alpha-value>)",
+          border: "rgb(var(--app-border) / <alpha-value>)",
+          text: "rgb(var(--app-text) / <alpha-value>)",
+          muted: "rgb(var(--app-muted) / <alpha-value>)",
+          accent: "rgb(var(--app-accent) / <alpha-value>)",
+          "accent-soft": "rgb(var(--app-accent) / 0.10)",
+          primary: "rgb(var(--app-primary) / <alpha-value>)",
+          "primary-fg": "rgb(var(--app-primary-fg) / <alpha-value>)",
+          active: "rgb(var(--app-active) / <alpha-value>)",
         },
       },
       fontFamily: {
-        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'Liberation Mono', 'monospace'],
-        sans: ['system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+        mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
       },
       boxShadow: {
-        neon: "0 0 15px rgba(61, 220, 132, 0.35)",
-        cyan: "0 0 15px rgba(0, 240, 255, 0.35)",
-        red: "0 0 15px rgba(255, 51, 102, 0.35)",
-      },
-      animation: {
-        pulseFast: "pulse 1.2s cubic-bezier(0.4, 0, 0.6, 1) infinite",
-        scanline: "scanline 8s linear infinite",
-      },
-      keyframes: {
-        scanline: {
-          "0%": { transform: "translateY(-100%)" },
-          "100%": { transform: "translateY(1000%)" },
-        },
+        shell: "0 1px 3px 0 rgb(0 0 0 / 0.04), 0 1px 2px -1px rgb(0 0 0 / 0.03)",
+        card: "0 1px 2px 0 rgb(0 0 0 / 0.03)",
       },
     },
   },
   plugins: [],
 };
-

@@ -2,8 +2,10 @@ import React, { useEffect, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { Terminal as TermIcon, Trash2, Send, ArrowDown } from "lucide-react";
-import { useCampaignStore } from "../../stores/useCampaignStore";
+import { Trash2, Send, ArrowDown } from "lucide-react";
+import { buildApiHeaders, buildApiUrl, useCampaignStore } from "../../stores/useCampaignStore";
+import { Card, ConfirmButton, PageContainer, PageHeader, PrimaryButton } from "../ui/Primitives";
+import { useI18n } from "../../i18n";
 
 export const LiveTerminal: React.FC = () => {
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -14,82 +16,83 @@ export const LiveTerminal: React.FC = () => {
   const [isExecuting, setIsExecuting] = useState(false);
   const [cmdHistory, setCmdHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
-  const { target, runnerStatus, fetchGraph, fetchMemorySummary, activeDockTab } = useCampaignStore();
+  const { target, runnerStatus, fetchMemorySummary, activePage, showLabs } = useCampaignStore();
+  const { t } = useI18n();
 
   useEffect(() => {
-    if (!terminalRef.current) return;
+    const el = terminalRef.current;
+    if (!el) return;
 
     const term = new XTerm({
       theme: {
-        background: "#06090e",
-        foreground: "#cbd5e1",
-        cursor: "#3ddc84",
-        selectionBackground: "rgba(61, 220, 132, 0.3)",
-        black: "#000000",
-        red: "#ff3366",
-        green: "#3ddc84",
-        yellow: "#fcee0a",
-        blue: "#00f0ff",
-        magenta: "#b026ff",
-        cyan: "#00f0ff",
-        white: "#ffffff",
+        background: "#0b0d12",
+        foreground: "#e2e8f0",
+        cursor: "#a78bfa",
+        selectionBackground: "rgba(167, 139, 250, 0.28)",
+        black: "#09090b",
+        red: "#fb7185",
+        green: "#34d399",
+        yellow: "#fbbf24",
+        blue: "#60a5fa",
+        magenta: "#c084fc",
+        cyan: "#22d3ee",
+        white: "#f4f4f5",
       },
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      fontFamily: "JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       fontSize: 12,
-      lineHeight: 1.4,
+      lineHeight: 1.45,
       cursorBlink: true,
       convertEol: true,
     });
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
-    term.open(terminalRef.current);
+    term.open(el);
     fitAddon.fit();
 
-    term.writeln("\x1b[1;32m[CAI_LO Cyber Terminal]\x1b[0m Kết nối thời gian thực với Kali Linux Reverse Runner.");
-    term.writeln("\x1b[90mGõ lệnh shell trực tiếp bên dưới để can thiệp tác chiến...\x1b[0m\r\n");
+    term.writeln("\x1b[1;32m[CAI_LO Terminal]\x1b[0m Kali Linux Reverse Runner live console.");
+    term.writeln("\x1b[90mType a shell command below to run directly...\x1b[0m\r\n");
 
     xtermInstance.current = term;
     fitAddonRef.current = fitAddon;
 
-    const handleResize = () => {
+    const observer = new ResizeObserver(() => {
       try {
         fitAddon.fit();
-      } catch (_) {}
-    };
-    window.addEventListener("resize", handleResize);
+      } catch {}
+    });
+    observer.observe(el);
 
     return () => {
-      window.removeEventListener("resize", handleResize);
+      observer.disconnect();
       term.dispose();
     };
   }, []);
 
-  // Re-fit and scroll to bottom when terminal tab becomes active
   useEffect(() => {
-    if (activeDockTab === "terminal" && xtermInstance.current && fitAddonRef.current) {
+    if (activePage === "terminal" && xtermInstance.current && fitAddonRef.current) {
       const timer = setTimeout(() => {
         try {
           fitAddonRef.current?.fit();
           xtermInstance.current?.scrollToBottom();
-        } catch (_) {}
+        } catch {}
       }, 60);
       return () => clearTimeout(timer);
     }
-  }, [activeDockTab]);
+  }, [activePage]);
 
-  // Poll logs from backend
   useEffect(() => {
     const pollLogs = async () => {
       try {
-        const res = await fetch(`/api/v1/runner/terminal/logs?since_seq=${lastSeqRef.current}`);
+        const res = await fetch(buildApiUrl(`/api/v1/runner/terminal/logs?since_seq=${lastSeqRef.current}`), {
+          headers: buildApiHeaders(),
+        });
         if (!res.ok) return;
         const data = await res.json();
         const events = data.events || [];
         if (data.last_seq !== undefined && data.last_seq > lastSeqRef.current) {
           lastSeqRef.current = data.last_seq;
         }
-
         if (xtermInstance.current && events.length > 0) {
           events.forEach((ev: any) => {
             if (ev.kind === "command") {
@@ -99,12 +102,10 @@ export const LiveTerminal: React.FC = () => {
               xtermInstance.current?.write(ev.text);
             }
           });
-          // Auto-scroll to bottom so user always sees the latest logs & results
           xtermInstance.current?.scrollToBottom();
         }
-      } catch (_) {}
+      } catch {}
     };
-
     const interval = setInterval(pollLogs, 1500);
     return () => clearInterval(interval);
   }, []);
@@ -112,27 +113,19 @@ export const LiveTerminal: React.FC = () => {
   const runCommand = async (cmdToRun: string) => {
     const cmd = cmdToRun.trim();
     if (!cmd || isExecuting) return;
-
     setIsExecuting(true);
     setCmdHistory((prev) => [cmd, ...prev.filter((c) => c !== cmd)]);
     setHistoryIndex(-1);
     setInputVal("");
-
     try {
-      await fetch("/api/v1/runner/terminal/exec", {
+      await fetch(buildApiUrl("/api/v1/runner/terminal/exec"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          command: cmd,
-          timeout: 60,
-          target: target,
-        }),
+        headers: buildApiHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ command: cmd, timeout: 60, target }),
       });
-
-      fetchGraph();
       fetchMemorySummary();
     } catch (err: any) {
-      xtermInstance.current?.writeln(`\r\n\x1b[1;31m[ERROR] ${err.message}\x1b[0m`);
+      xtermInstance.current?.writeln(`\r\n\x1b[1;31m[ERROR] ${err?.message || "Execution failed"}\x1b[0m`);
     } finally {
       setIsExecuting(false);
     }
@@ -144,113 +137,124 @@ export const LiveTerminal: React.FC = () => {
       lastSeqRef.current = 0;
     }
     try {
-      await fetch("/api/v1/runner/terminal/logs", { method: "DELETE" });
-    } catch (_) {}
+      await fetch(buildApiUrl("/api/v1/runner/terminal/logs"), {
+        method: "DELETE",
+        headers: buildApiHeaders(),
+      });
+    } catch {}
   };
 
+  const cleanHttpTarget = target && /^https?:\/\//i.test(target.trim()) ? target.trim() : "";
   const quickCommands = [
     { label: "id & uname", cmd: "id && uname -a" },
     { label: "ip a", cmd: "ip -br a" },
     { label: "ss -tulnp", cmd: "ss -tulnp" },
-    { label: "nmap nhanh", cmd: "nmap -F 127.0.0.1" },
-    { label: "check MockLab", cmd: "curl -I http://127.0.0.1:8888" },
+    ...(cleanHttpTarget
+      ? [{ label: "curl -I target", cmd: `curl -I ${cleanHttpTarget}` }]
+      : showLabs
+        ? [{ label: "check MockLab", cmd: "curl -I http://127.0.0.1:8888" }]
+        : [{ label: "pwd & ls", cmd: "pwd && ls -la" }]),
   ];
 
   return (
-    <div className="flex-1 h-full min-h-0 bg-cyber-panel flex flex-col font-mono">
-      {/* Terminal Top Bar */}
-      <div className="h-9 px-3 border-b border-cyber-border bg-cyber-panel2 flex items-center justify-between text-xs">
-        <div className="flex items-center gap-2">
-          <TermIcon className="w-4 h-4 text-cyber-neon" />
-          <span className="font-semibold text-cyber-text">Kali Interactive Terminal</span>
-          <span className="text-[10px] text-cyber-muted px-1.5 py-0.5 rounded bg-cyber-panel">
-            {runnerStatus?.active ? "🟢 Kali Runner Active" : "🟡 Local Shell Fallback"}
+    <PageContainer fullHeight>
+      <PageHeader
+        title="Terminal"
+        subtitle={
+          runnerStatus?.active
+            ? `Kali Runner active (${runnerStatus.runners?.[0]?.ip || "connected"}) · ${t("can thiệp trực tiếp", "interactive intervention")}`
+            : t("Local shell fallback (chưa kết nối Kali Reverse Runner)", "Local shell fallback (Kali Reverse Runner offline)")
+        }
+        actions={
+          <div className="flex items-center gap-1.5 overflow-x-auto max-w-full">
+            {quickCommands.map((q) => (
+              <button
+                key={q.label}
+                type="button"
+                onClick={() => runCommand(q.cmd)}
+                className="px-2.5 py-1.5 rounded-lg bg-app-panel border border-app-border text-xs text-app-muted hover:text-app-text hover:bg-app-panel2 transition-colors cursor-pointer font-mono whitespace-nowrap"
+              >
+                {q.label}
+              </button>
+            ))}
+          </div>
+        }
+      />
+
+      <Card className="flex-1 min-h-0 overflow-hidden flex flex-col">
+        <div className="h-10 px-3.5 border-b border-app-border bg-app-panel2/60 flex items-center justify-between text-xs shrink-0">
+          <span className="flex items-center gap-2 text-app-text font-medium">
+            <span className={`w-2 h-2 rounded-full ${runnerStatus?.active ? "bg-emerald-500" : "bg-zinc-400"}`} />
+            <span>{runnerStatus?.active ? "Kali Interactive Terminal" : "Host Fallback Terminal"}</span>
           </span>
-        </div>
-
-        {/* Quick Action Chips */}
-        <div className="hidden sm:flex items-center gap-1.5">
-          <span className="text-[11px] text-cyber-muted mr-1">Lệnh nhanh:</span>
-          {quickCommands.map((q, idx) => (
+          <div className="flex items-center gap-1.5">
             <button
-              key={idx}
-              onClick={() => runCommand(q.cmd)}
-              className="px-2 py-0.5 rounded bg-cyber-panel text-cyber-muted hover:text-cyber-cyan hover:border-cyber-cyan/40 border border-cyber-border text-[11px] transition-all"
+              type="button"
+              onClick={() => xtermInstance.current?.scrollToBottom()}
+              className="p-1.5 rounded-md text-app-muted hover:text-app-text hover:bg-app-panel transition-colors cursor-pointer"
+              aria-label={t("Cuộn xuống dưới cùng", "Scroll to bottom")}
+              title={t("Cuộn xuống dưới cùng", "Scroll to bottom")}
             >
-              {q.label}
+              <ArrowDown className="w-3.5 h-3.5" />
             </button>
-          ))}
+            <ConfirmButton
+              label={t("Xóa", "Clear")}
+              confirmLabel={t("Xóa log?", "Confirm?")}
+              icon={Trash2}
+              onConfirm={clearTerminal}
+            />
+          </div>
         </div>
 
-        {/* Tools */}
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => xtermInstance.current?.scrollToBottom()}
-            className="p-1 rounded text-cyber-muted hover:text-cyber-neon transition-all"
-            title="Cuộn xuống dưới cùng"
-          >
-            <ArrowDown className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={clearTerminal}
-            className="p-1 rounded text-cyber-muted hover:text-cyber-red transition-all"
-            title="Xóa màn hình terminal"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
+        <div className="flex-1 min-h-0 p-2.5 bg-[#0b0d12] overflow-hidden" ref={terminalRef} />
 
-      {/* Terminal Canvas */}
-      <div className="flex-1 p-2 bg-[#06090e] overflow-hidden" ref={terminalRef} />
-
-      {/* Input Row */}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          runCommand(inputVal);
-        }}
-        className="h-10 border-t border-cyber-border bg-[#080d14] px-3 flex items-center gap-2"
-      >
-        <span className="text-xs font-bold text-cyber-neon whitespace-nowrap">
-          {runnerStatus?.active ? "[MANUAL] kali@kali-vm:~#" : "[MANUAL] local@host:~#"}
-        </span>
-        <input
-          type="text"
-          value={inputVal}
-          onChange={(e) => setInputVal(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "ArrowUp") {
-              e.preventDefault();
-              if (cmdHistory.length > 0 && historyIndex < cmdHistory.length - 1) {
-                const nextIdx = historyIndex + 1;
-                setHistoryIndex(nextIdx);
-                setInputVal(cmdHistory[nextIdx]);
-              }
-            } else if (e.key === "ArrowDown") {
-              e.preventDefault();
-              if (historyIndex > 0) {
-                const nextIdx = historyIndex - 1;
-                setHistoryIndex(nextIdx);
-                setInputVal(cmdHistory[nextIdx]);
-              } else if (historyIndex === 0) {
-                setHistoryIndex(-1);
-                setInputVal("");
-              }
-            }
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            runCommand(inputVal);
           }}
-          placeholder="Nhập lệnh bash/zsh trực tiếp tới Kali VM (Enter để chạy, ↑/↓ lịch sử lệnh)..."
-          className="flex-1 bg-transparent border-none text-xs text-cyber-text font-mono focus:outline-none placeholder:text-cyber-muted/60"
-        />
-        <button
-          type="submit"
-          disabled={isExecuting || !inputVal.trim()}
-          className="px-3 py-1 rounded bg-cyber-panel2 border border-cyber-border text-xs text-cyber-cyan hover:border-cyber-cyan/50 disabled:opacity-50 flex items-center gap-1 transition-all"
+          className="h-12 border-t border-app-border bg-app-panel2/60 px-3.5 flex items-center gap-2.5 shrink-0"
         >
-          <Send className="w-3 h-3" /> Chạy
-        </button>
-      </form>
-    </div>
+          <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap font-mono">
+            {runnerStatus?.active ? "kali@kali-vm:~#" : "local@host:~#"}
+          </span>
+          <input
+            type="text"
+            value={inputVal}
+            onChange={(e) => setInputVal(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                if (cmdHistory.length > 0 && historyIndex < cmdHistory.length - 1) {
+                  const nextIdx = historyIndex + 1;
+                  setHistoryIndex(nextIdx);
+                  setInputVal(cmdHistory[nextIdx]);
+                }
+              } else if (e.key === "ArrowDown") {
+                e.preventDefault();
+                if (historyIndex > 0) {
+                  const nextIdx = historyIndex - 1;
+                  setHistoryIndex(nextIdx);
+                  setInputVal(cmdHistory[nextIdx]);
+                } else if (historyIndex === 0) {
+                  setHistoryIndex(-1);
+                  setInputVal("");
+                }
+              }
+            }}
+            placeholder={t(
+              "Nhập lệnh bash (Enter để chạy, ↑/↓ xem lịch sử)…",
+              "Enter bash command (Enter to run, ↑/↓ for history)…"
+            )}
+            aria-label={t("Nhập lệnh bash", "Enter bash command")}
+            className="flex-1 bg-transparent border-none text-xs sm:text-sm text-app-text font-mono focus:outline-none placeholder:text-app-muted/70"
+          />
+          <PrimaryButton type="submit" size="sm" disabled={isExecuting || !inputVal.trim()}>
+            <Send className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>{isExecuting ? t("Đang chạy…", "Running…") : t("Chạy", "Run")}</span>
+          </PrimaryButton>
+        </form>
+      </Card>
+    </PageContainer>
   );
 };
-

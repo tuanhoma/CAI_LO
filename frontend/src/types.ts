@@ -1,31 +1,3 @@
-export type NodeType = "attacker" | "host" | "port" | "endpoint" | "finding" | "flag" | "credential";
-
-export interface GraphNode {
-  id: string;
-  label: string;
-  type: NodeType;
-  layer: number;
-  meta: Record<string, any>;
-}
-
-export interface GraphEdge {
-  source: string;
-  target: string;
-  label: string;
-}
-
-export interface AttackGraphData {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-  stats: {
-    hosts: number;
-    ports: number;
-    endpoints: number;
-    credentials: number;
-    findings: number;
-  };
-}
-
 export interface FindingItem {
   id?: number;
   host: string;
@@ -46,6 +18,47 @@ export interface CredentialItem {
   updated_at?: string;
 }
 
+export interface HostItem {
+  host: string;
+  hostname?: string;
+  os_guess?: string;
+  last_seen?: string;
+  session_id?: string;
+}
+
+export interface PortItem {
+  host: string;
+  port: number;
+  proto: string;
+  state: string;
+  service?: string;
+  version?: string;
+  updated_at?: string;
+}
+
+export interface EndpointItem {
+  host: string;
+  url: string;
+  status_code?: number;
+  source_tool?: string;
+  updated_at?: string;
+}
+
+export interface MemorySummaryData {
+  stats: {
+    hosts: number;
+    ports: number;
+    endpoints: number;
+    credentials: number;
+    findings: number;
+  };
+  hosts: HostItem[];
+  ports: PortItem[];
+  endpoints: EndpointItem[];
+  credentials: CredentialItem[];
+  findings: FindingItem[];
+}
+
 export interface TerminalEvent {
   seq: number;
   timestamp: number;
@@ -55,11 +68,20 @@ export interface TerminalEvent {
   text: string;
 }
 
+export interface RunnerEndpoint {
+  ip: string;
+  label: string;
+  kind?: string;
+}
+
 export interface RunnerStatus {
   active: boolean;
   count: number;
   token: string;
   preferred_ip: string;
+  port?: number;
+  controller_ips?: string[];
+  controller_endpoints?: RunnerEndpoint[];
   runners: Array<{
     runner_id: string;
     hostname: string;
@@ -86,13 +108,13 @@ export interface MockLabStatus {
   }>;
 }
 
-
 export interface AgentItem {
   name: string;
   key: string;
   description?: string;
   type?: string;
   pattern_type?: string | null;
+  tools?: Array<{ name: string; description?: string }>;
 }
 
 export interface ModelItem {
@@ -100,6 +122,18 @@ export interface ModelItem {
   provider?: string | null;
   category?: string | null;
   description?: string | null;
+}
+
+export interface ModelSplitConfig {
+  lead: string;
+  fast: string;
+  reason: string;
+  split_active: boolean;
+}
+
+export interface ScopeConfig {
+  enabled: boolean;
+  scope: string[];
 }
 
 export interface AgentStep {

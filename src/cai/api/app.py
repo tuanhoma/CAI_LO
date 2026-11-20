@@ -1332,6 +1332,133 @@ def create_cai_api_app(
         return {"status": "cleared"}
 
     # ------------------------------------------------------------------
+    # Geo-location proxy: map a target (public IP OR domain) to real lat/lon.
+    # Done server-side (ip-api.com) to avoid browser CORS and keep the UI
+    # loopback-only. Private/lab hosts return private=true so the frontend
+    # falls back to its deterministic hash placement.
+    # ------------------------------------------------------------------
+    _GEO_CACHE: dict = {}
+
+    def _is_private_host(host: str) -> bool:
+        import ipaddress
+        import re as _re
+        h = (host or "").strip().lower()
+        h = _re.sub(r"^[a-z]+://", "", h).split("/")[0]
+        # strip :port but keep IPv6 brackets off
+        if h.count(":") == 1:
+            h = h.split(":")[0]
+        if not h or h in ("localhost",) or h.endswith(".local") or h.endswith(".internal"):
+            return True
+        if "." not in h and ":" not in h:  # bare hostname, not resolvable publicly
+            return True
+        try:
+            ip = ipaddress.ip_address(h)
+            return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+        except ValueError:
+            return False  # a domain name -> treat as public, let ip-api resolve it
+
+    def _geo_lookup_one(host: str) -> dict:
+        import re as _re
+        raw = (host or "").strip()
+        key = _re.sub(r"^[a-z]+://", "", raw.lower()).split("/")[0]
+        if key.count(":") == 1:
+            key = key.split(":")[0]
+        if not key:
+            return {"host": host, "private": True}
+        if key in _GEO_CACHE:
+            return _GEO_CACHE[key]
+        if _is_private_host(key):
+            result = {"host": key, "private": True}
+            _GEO_CACHE[key] = result
+            return result
+        result = {"host": key, "private": False}
+        try:
+            import urllib.request
+            url = f"http://ip-api.com/json/{key}?fields=status,country,countryCode,lat,lon,query"
+            with urllib.request.urlopen(url, timeout=4) as resp:
+                data = _json.loads(resp.read().decode("utf-8", errors="replace"))
+            if data.get("status") == "success":
+                result.update({
+                    "lat": data.get("lat"),
+                    "lon": data.get("lon"),
+                    "country": data.get("country"),
+                    "country_code": data.get("countryCode"),
+                    "resolved_ip": data.get("query"),
+                })
+            else:
+                result["error"] = data.get("message", "lookup_failed")
+        except Exception as e:  # network error / rate limit -> frontend uses hash fallback
+            result["error"] = str(e)[:120]
+        _GEO_CACHE[key] = result
+        return result
+
+    @app.get("/api/v1/geo", tags=["memory"])
+    def geo_lookup(host: str = ""):
+        """Resolve a single target (IP or domain) to real lat/lon, or private=true."""
+        if not host.strip():
+            return {"host": "", "private": True}
+        return _geo_lookup_one(host)
+
+    @app.get("/api/v1/geo/myip", tags=["memory"])
+    def geo_my_ip():
+        """Geo-locate THIS machine's own public IP (the attacker / C2 origin)."""
+        if "__self__" in _GEO_CACHE:
+            return _GEO_CACHE["__self__"]
+        result = {"private": True}
+        try:
+            import urllib.request
+            url = "http://ip-api.com/json/?fields=status,country,countryCode,lat,lon,query"
+            with urllib.request.urlopen(url, timeout=4) as resp:
+                data = _json.loads(resp.read().decode("utf-8", errors="replace"))
+            if data.get("status") == "success":
+                result = {
+                    "private": False,
+                    "lat": data.get("lat"),
+                    "lon": data.get("lon"),
+                    "ip": data.get("query"),
+                    "country": data.get("country"),
+                    "country_code": data.get("countryCode"),
+                }
+        except Exception as e:
+            result = {"private": True, "error": str(e)[:120]}
+        _GEO_CACHE["__self__"] = result
+        return result
+
+    @app.get("/api/v1/config/models", tags=["memory"])
+    def get_model_split_config():
+        """Expose the role-based model routing so the UI can show it (read-only)."""
+        lead = os.getenv("CAI_MODEL", "")
+        fast = os.getenv("CAI_MODEL_FAST") or lead
+        reason = os.getenv("CAI_MODEL_REASON") or lead
+        return {
+            "lead": lead,
+            "fast": fast,
+            "reason": reason,
+            "split_active": bool(os.getenv("CAI_MODEL_FAST")),
+        }
+
+    @app.post("/api/v1/geo/batch", tags=["memory"])
+    async def geo_lookup_batch(request: Request):
+        """Resolve many targets at once: body {"hosts": ["1.2.3.4", "example.com", ...]}."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        hosts = body.get("hosts") if isinstance(body, dict) else None
+        if not isinstance(hosts, list):
+            return {"results": []}
+        seen = []
+        out = []
+        for h in hosts[:100]:
+            if not isinstance(h, str):
+                continue
+            if h in seen:
+                continue
+            seen.append(h)
+            out.append(_geo_lookup_one(h))
+        return {"results": out}
+
+    # ------------------------------------------------------------------
     # Stage 7: Live Interactive Terminal & Manual Intervention
     # ------------------------------------------------------------------
     @app.get("/api/v1/runner/terminal/logs", tags=["runner"])
@@ -1398,6 +1525,26 @@ def create_cai_api_app(
         return mock_lab_manager.stop()
 
     # ------------------------------------------------------------------
+    # Advanced (harder) lab — server-side vulns (SSTI/SQLi/JWT/SSRF), port 8889
+    # ------------------------------------------------------------------
+    from cai.lab import hard_lab_manager
+
+    @app.get("/api/v1/lab/hard/status", tags=["lab"])
+    def get_hard_lab_status():
+        """Retrieve Advanced Lab status and challenge progress."""
+        return hard_lab_manager.get_status()
+
+    @app.post("/api/v1/lab/hard/start", tags=["lab"])
+    def start_hard_lab(host: str = "0.0.0.0", port: int = 8889):
+        """Start the Advanced Lab server in background."""
+        return hard_lab_manager.start(host=host, port=port)
+
+    @app.post("/api/v1/lab/hard/stop", tags=["lab"])
+    def stop_hard_lab():
+        """Stop the Advanced Lab server."""
+        return hard_lab_manager.stop()
+
+    # ------------------------------------------------------------------
     # Optional local web dashboard (served only for loopback convenience).
     # Enabled unless CAI_API_SERVE_UI is explicitly falsy. The directory is
     # a static, read-only single-page UI that consumes the SSE endpoints.
@@ -1431,12 +1578,6 @@ def create_cai_api_app(
                             "Expires": "0",
                         },
                     )
-
-                # Classic 2D UI accessible at /ui/classic
-                if (classic_ui_dir / "index.html").is_file():
-                    @app.get("/ui/classic", include_in_schema=False)
-                    def _serve_classic_ui() -> FileResponse:
-                        return FileResponse(str(classic_ui_dir / "index.html"))
 
                 @app.get("/", include_in_schema=False)
                 def _root_redirect() -> RedirectResponse:
