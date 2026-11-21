@@ -32,7 +32,7 @@ from cai.util import (
     cli_print_tool_output,
 )
 # OutputManager integration [T] — emit events for tool lifecycle
-from cai.output import OUTPUT, ToolStartEvent, ToolCompleteEvent, ToolErrorEvent
+from cai.output import OUTPUT, ToolStartEvent, ToolCompleteEvent, ToolErrorEvent, ToolStreamEvent
 # CAIConfig integration [B] — centralized config replaces os.getenv
 from cai.config import get_config as _get_config
 
@@ -1299,6 +1299,25 @@ def _run_local(
 # AND in common.py, these functions are defined once in this module and
 # common.py re-exports them.  See common.py for the backward-compat shim.
 
+def _route_log(msg: str) -> None:
+    """Diagnostic: record where an agent command was dispatched (Kali vs local).
+
+    Writes to the server console AND to D:/CAI_LO/route_debug.log so the routing
+    decision can be inspected after a run without reading the console window.
+    """
+    line = f"[ROUTE] {msg}"
+    try:
+        print(line, flush=True)
+    except Exception:
+        pass
+    try:
+        import time as _t
+        with open(os.path.join(os.getcwd(), "route_debug.log"), "a", encoding="utf-8") as _f:
+            _f.write(f"{_t.strftime('%H:%M:%S')} {line}\n")
+    except Exception:
+        pass
+
+
 async def run_command_async(
     command, ctf=None, stdout=False, async_mode=False, session_id=None,
     timeout=None, stream=False, call_id=None, tool_name=None, args=None,
@@ -1330,7 +1349,7 @@ async def run_command_async(
         tool_name = f"{cmd_name}_command" if cmd_name else "command"
 
     # Emit ToolStartEvent [T]
-    OUTPUT.emit(ToolStartEvent(tool_name=tool_name, call_id=call_id or ""))
+    OUTPUT.emit(ToolStartEvent(tool_name=tool_name, call_id=call_id or "", command=command))
 
     _start_ts = time.time()
 
@@ -1339,6 +1358,38 @@ async def run_command_async(
 
     # Wrap dispatch in try/except to emit ToolComplete/ToolError events [T]
     try:
+        # Scope Guard & Safety Gate check (Rules of Engagement)
+        try:
+            from cai.security import scope_guard
+            from cai.autonomy import AutonomyController
+            from cai.audit import audit_logger, get_active_session_id
+            safe_ok, safe_reason = AutonomyController.check_destructive_command(command)
+            if not safe_ok:
+                active_sid = session_id or get_active_session_id()
+                audit_logger.log_scope_violation(active_sid, command, safe_reason or "")
+                OUTPUT.emit(ToolCompleteEvent(
+                    tool_name=tool_name,
+                    call_id=call_id or "",
+                    output=safe_reason or "",
+                    exit_code=1,
+                    duration_seconds=0.01,
+                ))
+                return safe_reason
+            scope_ok, violation_reason = scope_guard.check_command(command)
+            if not scope_ok:
+                active_sid = session_id or get_active_session_id()
+                audit_logger.log_scope_violation(active_sid, command, violation_reason or "")
+                OUTPUT.emit(ToolCompleteEvent(
+                    tool_name=tool_name,
+                    call_id=call_id or "",
+                    output=violation_reason or "",
+                    exit_code=1,
+                    duration_seconds=0.01,
+                ))
+                return violation_reason
+        except Exception:
+            pass
+
         if session_id:
             import asyncio, functools
             loop = asyncio.get_event_loop()
@@ -1373,6 +1424,41 @@ async def run_command_async(
             active_container = _get_config().active_container or ""
         _cfg = _get_config()
         is_ssh_env = bool(_cfg.ssh_user and _cfg.ssh_host)
+
+        # --- Reverse Runner (Kali Linux VM) ---
+        try:
+            from cai.runner.manager import runner_manager
+            _runner_up = runner_manager.is_active()
+            _route_log(f"async is_active={_runner_up} cmd={command[:70]!r}")
+            if _runner_up:
+                def _runner_stream_cb(chunk: str):
+                    if stream and call_id:
+                        OUTPUT.emit(ToolStreamEvent(
+                            tool_name=tool_name,
+                            call_id=call_id,
+                            chunk=chunk,
+                        ))
+
+                runner_cmd = command
+                if workspace_dir and str(workspace_dir).strip():
+                    wd = str(workspace_dir).strip()
+                    runner_cmd = f"cd {wd} && {command}"
+
+                res = await runner_manager.execute_async(
+                    command=runner_cmd,
+                    timeout=timeout,
+                    stream_callback=_runner_stream_cb if stream else None,
+                )
+                output_str = res.get("output", "")
+                OUTPUT.emit(ToolCompleteEvent(
+                    tool_name=tool_name,
+                    call_id=call_id or "",
+                    output=str(output_str)[:500] if output_str else "",
+                    duration_seconds=time.time() - _start_ts,
+                ))
+                return output_str
+        except Exception as _e:
+            _route_log(f"async KALI dispatch FAILED -> local fallback: {_e!r}")
 
         if active_container and not is_ssh_env:
             result = await _run_docker_async(
@@ -1411,6 +1497,8 @@ async def run_command_async(
             return result
 
         local_cwd = workspace_dir if workspace_dir is not None else _get_workspace_dir()
+        if sys.platform == "win32" and (not os.path.exists(local_cwd) or not os.path.isdir(local_cwd)):
+            local_cwd = _get_workspace_dir()
         result = await _run_local_async(
             command, stdout=stdout, timeout=timeout, stream=stream,
             call_id=call_id, tool_name=tool_name,
@@ -1446,7 +1534,7 @@ async def run_command_async(
             result = apply_packet_capture_notice(command, result)
 
         OUTPUT.emit(ToolCompleteEvent(
-            tool_name=tool_name, call_id=call_id or "",
+            tool_name=tool_name, call_id=call_id or "", command=command,
             output=str(result)[:500] if result else "",
             duration_seconds=time.time() - _start_ts,
         ))
@@ -1454,7 +1542,7 @@ async def run_command_async(
 
     except Exception as exc:
         OUTPUT.emit(ToolErrorEvent(
-            tool_name=tool_name, call_id=call_id or "",
+            tool_name=tool_name, call_id=call_id or "", command=command,
             error=str(exc)[:500], error_type=type(exc).__name__,
         ))
         raise
@@ -1567,10 +1655,77 @@ def run_command(
                 return output
             return f"Command sent to session {label}. No output captured."
 
+        # Scope Guard & Safety Gate check (Rules of Engagement)
+        try:
+            from cai.security import scope_guard
+            from cai.autonomy import AutonomyController
+            from cai.audit import audit_logger, get_active_session_id
+            safe_ok, safe_reason = AutonomyController.check_destructive_command(command)
+            if not safe_ok:
+                active_sid = session_id or get_active_session_id()
+                audit_logger.log_scope_violation(active_sid, command, safe_reason or "")
+                stop_active_timer()
+                start_idle_timer()
+                return safe_reason
+            scope_ok, violation_reason = scope_guard.check_command(command)
+            if not scope_ok:
+                active_sid = session_id or get_active_session_id()
+                audit_logger.log_scope_violation(active_sid, command, violation_reason or "")
+                stop_active_timer()
+                start_idle_timer()
+                return violation_reason
+        except Exception:
+            pass
+
         # --- Environment detection (via CAIConfig) ---
         _cfg_sync = _get_config()
         active_container = _cfg_sync.active_container or ""
         is_ssh_env = bool(_cfg_sync.ssh_user and _cfg_sync.ssh_host)
+
+        # --- Reverse Runner (Kali Linux VM) ---
+        try:
+            from cai.runner.manager import runner_manager
+            _runner_up = runner_manager.is_active()
+            _route_log(f"sync is_active={_runner_up} cmd={command[:70]!r}")
+            if _runner_up:
+                from cai.util import start_tool_streaming, update_tool_streaming, finish_tool_streaming
+                tool_args = args.copy() if isinstance(args, dict) else {"args": str(args or "")}
+                tool_args["environment"] = "Kali Runner"
+                tool_args["full_command"] = command
+                token_info = _get_agent_token_info()
+
+                if stream:
+                    call_id = start_tool_streaming(tool_name, tool_args, call_id, token_info)
+                    update_tool_streaming(tool_name, tool_args, f"Executing on Kali VM: {command}\n...", call_id, token_info)
+
+                def _sync_stream_cb(chunk: str):
+                    if stream:
+                        update_tool_streaming(tool_name, tool_args, chunk, call_id, token_info)
+
+                start_ts = time.time()
+                runner_cmd = command
+                if workspace_dir and str(workspace_dir).strip():
+                    wd = str(workspace_dir).strip()
+                    runner_cmd = f"cd {wd} && {command}"
+
+                res = runner_manager.execute_sync(
+                    command=runner_cmd,
+                    timeout=timeout,
+                    stream_callback=_sync_stream_cb if stream else None,
+                )
+                duration = time.time() - start_ts
+                output_str = res.get("output", "")
+                if stream:
+                    finish_tool_streaming(
+                        tool_name, tool_args, output_str, call_id,
+                        {"status": "completed", "environment": "Kali VM", "tool_time": duration},
+                        token_info,
+                    )
+                stop_active_timer()
+                start_idle_timer()
+                return output_str
+        except Exception as _e:
+            _route_log(f"sync KALI dispatch FAILED -> local fallback: {_e!r}")
 
         # --- Docker ---
         if active_container and not is_ssh_env:
@@ -1866,6 +2021,8 @@ def run_command(
             return f"Started async session {label} locally. Use this ID to interact."
 
         local_cwd = workspace_dir if workspace_dir is not None else _get_workspace_dir()
+        if sys.platform == "win32" and (not os.path.exists(local_cwd) or not os.path.isdir(local_cwd)):
+            local_cwd = _get_workspace_dir()
         result = _run_local(
             command, stdout, timeout, stream=stream, call_id=call_id,
             tool_name=tool_name, workspace_dir=local_cwd, custom_args=args,
